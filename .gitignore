@@ -1,0 +1,15 @@
+# OS junk
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+
+# Local design tooling (not part of the deployed app)
+.design-canvas.state.json
+
+# Local secrets (in case we add a config file later)
+.env
+.env.local
+config.local.js

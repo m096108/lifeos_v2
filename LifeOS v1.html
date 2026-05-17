@@ -1,0 +1,1131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+<title>Life OS</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet" />
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+html,body{height:100%;background:#111;font-family:'Inter',sans-serif;-webkit-font-smoothing:antialiased}
+::-webkit-scrollbar{width:3px}::-webkit-scrollbar-track{background:transparent}::-webkit-scrollbar-thumb{background:#ddd;border-radius:3px}
+input,select,textarea,button{font-family:'Inter',sans-serif;font-size:16px}
+@keyframes slideUp{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}}
+@keyframes fadeIn{from{opacity:0}to{opacity:1}}
+@keyframes taskOut{0%{opacity:1;transform:translateX(0)}100%{opacity:0;transform:translateX(60px)}}
+.slide-up{animation:slideUp .25s ease-out both}
+.fade-in{animation:fadeIn .2s ease-out both}
+.task-out{animation:taskOut .55s cubic-bezier(.4,0,.2,1) forwards}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useEffect, useRef, useCallback } = React;
+
+/* ── DESIGN TOKENS ──────────────────────────────────────── */
+const T = {
+  bg:'#F7F6F3', bgS:'#EFEDE9', card:'#FFFFFF',
+  ac:'#4458E0', acS:'#EBEDFC', acM:'#A5B0F5',
+  tx:'#1A1A1F', txM:'#6B6975', txS:'#A09FA8',
+  border:'#E5E3E0',
+  r:'#E03434', rS:'#FEF2F2',
+  g:'#16A34A', gS:'#F0FDF4',
+  w:'#CA8A04', wS:'#FEFCE8',
+  serif:"'DM Serif Display',serif",
+};
+const PC = {1:'#E03434',2:'#CA8A04',3:'#A09FA8'};
+
+/* ── HELPERS ─────────────────────────────────────────────── */
+function uid(){return Date.now().toString(36)+Math.random().toString(36).slice(2,6)}
+function today(){return new Date().toISOString().split('T')[0]}
+function daysFrom(d){const t=new Date();t.setHours(0,0,0,0);const x=new Date(d);x.setHours(0,0,0,0);return Math.ceil((x-t)/86400000)}
+function fmtD(d){return new Date(d+'T12:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric'})}
+function fmtDLong(d){return new Date(d+'T12:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'})}
+function fmtSec(s){if(!s&&s!==0)return '—';return `${Math.floor(s/60)}:${String(s%60).padStart(2,'0')}`}
+function taskSort(a,b){
+  const aD=a.due_date?daysFrom(a.due_date):999,bD=b.due_date?daysFrom(b.due_date):999;
+  if((aD<0)!==(bD<0))return aD<0?-1:1;
+  if((a.priority||2)!==(b.priority||2))return (a.priority||2)-(b.priority||2);
+  return aD-bD;
+}
+function dueTag(t){
+  if(!t.due_date)return null;
+  const d=daysFrom(t.due_date);
+  if(d<0)return{tx:`${Math.abs(d)}d overdue`,c:T.r,bg:T.rS};
+  if(d===0)return{tx:'Today',c:T.w,bg:T.wS};
+  if(d===1)return{tx:'Tomorrow',c:T.w,bg:T.wS};
+  return{tx:fmtD(t.due_date),c:T.txS,bg:'transparent'};
+}
+const CHIP_PAL=[
+  {bg:'#EEF0FD',c:'#3B4FD8'},{bg:'#FFF7ED',c:'#C2410C'},
+  {bg:'#F0FDF4',c:'#15803D'},{bg:'#FDF2F8',c:'#BE185D'},
+  {bg:'#F5F3FF',c:'#7C3AED'},{bg:'#FEF9C3',c:'#854D0E'},
+  {bg:'#ECFDF5',c:'#059669'},{bg:'#E0F2FE',c:'#0369A1'},
+];
+const CHIP_MAP={home:CHIP_PAL[0],out:CHIP_PAL[1],anywhere:CHIP_PAL[2],work:CHIP_PAL[4]};
+function chipStyle(s){
+  if(CHIP_MAP[s])return CHIP_MAP[s];
+  let h=0;for(const c of(s||''))h=(h*31+c.charCodeAt(0))>>>0;
+  return CHIP_PAL[h%CHIP_PAL.length];
+}
+
+/* ── PERSISTENCE ─────────────────────────────────────────── */
+function dStr(n){const d=new Date();d.setDate(d.getDate()-n);return d.toISOString().split('T')[0]}
+const SEED={
+  user:{age:22},
+  categories:['home','out','anywhere','work'],
+  workoutCats:[{id:'run',name:'Run',color:'#22C55E'},{id:'strength',name:'Strength',color:'#8B5CF6'},{id:'hiit',name:'HIIT',color:'#F97316'}],
+  tasks:[
+    {id:uid(),title:'Review Q3 budget proposal',context:'work',priority:1,due_date:'2026-05-01',status:'todo',project_id:null},
+    {id:uid(),title:'Call Mom back',context:'home',priority:2,due_date:today(),status:'todo',project_id:null},
+    {id:uid(),title:'Pick up dry cleaning',context:'out',priority:3,due_date:null,status:'todo',project_id:null},
+  ],
+  projects:[
+    {id:'p1',title:'Home Renovation',notes:'Planning the kitchen remodel. Need to get 3 contractor quotes.',updated_at:'2026-04-20',status:'active'},
+    {id:'p2',title:'Career Development',notes:'Study for promotion cycle. Leadership course by June.',updated_at:'2026-04-18',status:'active'},
+  ],
+  workouts:[
+    {id:'w1',date:today(),type:'run',duration_minutes:35,notes:'5k easy'},
+    {id:'w2',date:dStr(1),type:'strength',duration_minutes:50,notes:'Upper body'},
+    {id:'w3',date:dStr(2),type:'hiit',duration_minutes:25,notes:''},
+    {id:'w4',date:dStr(4),type:'run',duration_minutes:40,notes:''},
+    {id:'w5',date:dStr(5),type:'strength',duration_minutes:55,notes:''},
+    {id:'w6',date:dStr(6),type:'run',duration_minutes:30,notes:''},
+    {id:'w7',date:dStr(8),type:'hiit',duration_minutes:20,notes:''},
+  ],
+  pft:[],cft:[],
+  trips:[
+    {id:'tr1',destination:'New York City',start_date:'2026-06-10',end_date:'2026-06-14',notes:'Conference + exploring Brooklyn',outfit_photos:[]},
+    {id:'tr2',destination:'Cancun',start_date:'2026-08-01',end_date:'2026-08-08',notes:'Beach vacation!',outfit_photos:[]},
+  ],
+  checklist:[],
+  clothing:[
+    {id:'cl1',type:'need_to_return',title:'Blue blazer – Zara',notes:'Wrong size',deadline:'2026-05-05',done:false,photo:null},
+    {id:'cl2',type:'want_to_buy',title:'White linen trousers',notes:'For summer trips',price:'85',done:false,photo:null},
+    {id:'cl3',type:'outfit_idea',title:'Sunday brunch',notes:'White top + wide-leg jeans',done:false,photo:null},
+  ],
+  inspo:[],
+  books:[
+    {id:'b1',title:'Atomic Habits',author:'James Clear',status:'to_read',rating:null,categories:['non-fiction'],notes:'',order:0},
+    {id:'b2',title:'The Alchemist',author:'Paulo Coelho',status:'to_read',rating:null,categories:['fiction'],notes:'',order:1},
+    {id:'b3',title:'Thinking, Fast and Slow',author:'Daniel Kahneman',status:'to_read',rating:null,categories:['non-fiction'],notes:'',order:2},
+    {id:'b4',title:'Educated',author:'Tara Westover',status:'read',rating:5,categories:['non-fiction'],notes:'Incredible memoir',order:0},
+    {id:'b5',title:'Normal People',author:'Sally Rooney',status:'read',rating:4,categories:['fiction'],notes:'',order:1},
+  ],
+  bookCategories:['fiction','non-fiction','self-help','biography'],
+};
+function loadState(){try{const r=localStorage.getItem('lifeos_v5');if(r)return JSON.parse(r);}catch(e){}return JSON.parse(JSON.stringify(SEED));}
+function saveState(s){try{localStorage.setItem('lifeos_v5',JSON.stringify(s));}catch(e){}}
+
+/* ── UI PRIMITIVES ───────────────────────────────────────── */
+function Card({children,onClick,style={},accent}){
+  return <div onClick={onClick} style={{background:T.card,borderRadius:18,boxShadow:'0 1px 3px rgba(0,0,0,0.05),0 6px 20px rgba(0,0,0,0.04)',borderLeft:accent?`3px solid ${T.ac}`:undefined,cursor:onClick?'pointer':undefined,...style}}>{children}</div>;
+}
+function Btn({children,onClick,v='primary',size='md',full,disabled}){
+  const base={display:'inline-flex',alignItems:'center',justifyContent:'center',gap:6,borderRadius:12,fontWeight:700,border:'none',cursor:disabled?'default':'pointer',fontFamily:'inherit',letterSpacing:'-0.01em',width:full?'100%':undefined,opacity:disabled?.5:1,fontSize:size==='sm'?13:14,padding:size==='sm'?'8px 16px':'11px 20px',minHeight:size==='sm'?36:44,transition:'opacity .1s'};
+  const vs={primary:{background:T.ac,color:'#fff'},ghost:{background:T.acS,color:T.ac},soft:{background:T.bgS,color:T.txM},danger:{background:T.rS,color:T.r},dark:{background:T.tx,color:'#fff'}};
+  return <button onClick={onClick} disabled={disabled} style={{...base,...vs[v]}}>{children}</button>;
+}
+function Inp({label,area,...props}){
+  const [focus,setFocus]=useState(false);
+  const style={width:'100%',boxSizing:'border-box',background:T.bgS,border:`2px solid ${focus?T.ac:'transparent'}`,borderRadius:12,padding:'11px 14px',fontSize:15,color:T.tx,outline:'none',fontFamily:'inherit',transition:'border-color .15s',resize:area?'none':undefined};
+  return <div>{label&&<label style={{display:'block',fontSize:11,fontWeight:700,textTransform:'uppercase',letterSpacing:'0.1em',color:T.txS,marginBottom:6}}>{label}</label>}{area?<textarea {...props} style={style} onFocus={e=>{setFocus(true);props.onFocus?.(e)}} onBlur={e=>{setFocus(false);props.onBlur?.(e)}} />:<input {...props} style={style} onFocus={e=>{setFocus(true);props.onFocus?.(e)}} onBlur={e=>{setFocus(false);props.onBlur?.(e)}} />}</div>;
+}
+function Sel({label,children,...props}){
+  return <div>{label&&<label style={{display:'block',fontSize:11,fontWeight:700,textTransform:'uppercase',letterSpacing:'0.1em',color:T.txS,marginBottom:6}}>{label}</label>}<select {...props} style={{width:'100%',boxSizing:'border-box',background:T.bgS,border:'2px solid transparent',borderRadius:12,padding:'11px 14px',fontSize:15,color:T.tx,outline:'none',fontFamily:'inherit'}}>{children}</select></div>;
+}
+function Chip({label}){const s=chipStyle(label);return <span style={{fontSize:11,fontWeight:700,padding:'3px 9px',borderRadius:8,background:s.bg,color:s.c,textTransform:'capitalize',display:'inline-block'}}>{label}</span>;}
+function Pill({label,active,onClick,dashed,count}){
+  return <button onClick={onClick} style={{fontSize:12,fontWeight:700,padding:'7px 13px',borderRadius:10,border:dashed?`1.5px dashed ${T.ac}`:'none',background:dashed?'transparent':active?T.ac:T.bgS,color:dashed?T.ac:active?'#fff':T.txM,cursor:'pointer',fontFamily:'inherit',display:'inline-flex',alignItems:'center',gap:4,textTransform:'capitalize',whiteSpace:'nowrap'}}>
+    {label}{count!=null?` ${count}`:''}
+  </button>;
+}
+function Check({on,onClick}){
+  return <button onClick={onClick} style={{width:22,height:22,borderRadius:7,flexShrink:0,border:`2px solid ${on?T.ac:T.border}`,background:on?T.ac:'transparent',display:'flex',alignItems:'center',justifyContent:'center',cursor:'pointer',transition:'all .15s'}}>
+    {on&&<svg width="10" height="8" viewBox="0 0 10 8" fill="none"><path d="M1 4L3.5 6.5L9 1.5" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>}
+  </button>;
+}
+function Bar({value,max,h=6,color}){
+  const p=max>0?Math.min(100,(value/max)*100):0;
+  return <div style={{width:'100%',height:h,background:T.bgS,borderRadius:99,overflow:'hidden'}}><div style={{height:'100%',width:`${p}%`,background:color||T.ac,borderRadius:99,transition:'width .7s cubic-bezier(.4,0,.2,1)'}}/></div>;
+}
+function SecLabel({children,action,onAction}){
+  return <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:10}}>
+    <span style={{fontSize:10,fontWeight:800,textTransform:'uppercase',letterSpacing:'0.12em',color:T.txS}}>{children}</span>
+    {action&&<button onClick={onAction} style={{fontSize:12,fontWeight:700,color:T.ac,background:'none',border:'none',cursor:'pointer',fontFamily:'inherit'}}>{action}</button>}
+  </div>;
+}
+function PageTitle({children}){
+  return <h1 style={{fontSize:28,fontWeight:400,color:T.tx,letterSpacing:'-0.02em',fontFamily:T.serif,lineHeight:1.1,marginBottom:20,marginTop:4}}>{children}</h1>;
+}
+function TabBar({tabs,active,onChange}){
+  return <div style={{display:'flex',gap:3,padding:4,borderRadius:14,background:T.bgS,marginBottom:20}}>
+    {tabs.map(([k,l])=><button key={k} onClick={()=>onChange(k)} style={{flex:1,fontSize:12,fontWeight:700,padding:'9px 4px',borderRadius:10,border:'none',cursor:'pointer',fontFamily:'inherit',transition:'all .15s',background:active===k?T.card:'transparent',color:active===k?T.ac:T.txS,boxShadow:active===k?'0 2px 8px rgba(0,0,0,0.07)':'none'}}>{l}</button>)}
+  </div>;
+}
+function Empty({icon,text}){
+  return <div style={{textAlign:'center',padding:'48px 20px'}}><div style={{fontSize:32,marginBottom:10}}>{icon}</div><p style={{fontSize:14,color:T.txS}}>{text}</p></div>;
+}
+function ScoreBar({label,raw,score}){
+  const sc=score>=80?T.g:score>=60?T.ac:score>=40?T.w:T.r;
+  return <div style={{padding:'12px 0',borderBottom:`1px solid ${T.bgS}`}}>
+    <div style={{display:'flex',justifyContent:'space-between',alignItems:'baseline',marginBottom:8}}>
+      <div><span style={{fontSize:14,fontWeight:600,color:T.tx}}>{label}</span><span style={{fontSize:12,color:T.txS,marginLeft:8}}>{raw}</span></div>
+      <span style={{fontSize:22,fontWeight:700,color:sc,fontFamily:T.serif}}>{score}</span>
+    </div>
+    <Bar value={score} max={100} h={5} color={sc} />
+  </div>;
+}
+function Stars({rating,onRate}){
+  return <div style={{display:'flex',gap:3,marginTop:6}}>
+    {[1,2,3,4,5].map(n=><button key={n} onClick={()=>onRate(n)} style={{fontSize:18,lineHeight:1,background:'none',border:'none',cursor:'pointer',color:n<=(rating||0)?'#F59E0B':T.border}}>
+      {n<=(rating||0)?'★':'☆'}
+    </button>)}
+  </div>;
+}
+function Sheet({children,onClose}){
+  return <div onClick={onClose} style={{position:'fixed',inset:0,zIndex:200,background:'rgba(0,0,0,0.45)',display:'flex',alignItems:'flex-end'}}>
+    <div onClick={e=>e.stopPropagation()} style={{background:T.card,borderRadius:'24px 24px 0 0',padding:'20px 20px 32px',width:'100%',boxSizing:'border-box',maxHeight:'85vh',overflowY:'auto'}}>
+      <div style={{width:36,height:4,borderRadius:99,background:T.border,margin:'0 auto 20px'}}/>
+      {children}
+    </div>
+  </div>;
+}
+function Back({onClick}){
+  return <button onClick={onClick} style={{background:T.bgS,border:'none',borderRadius:10,width:36,height:36,display:'flex',alignItems:'center',justifyContent:'center',cursor:'pointer',flexShrink:0}}>
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={T.tx} strokeWidth="2.5"><polyline points="15,18 9,12 15,6"/></svg>
+  </button>;
+}
+function IconBtn({onClick,children,danger}){
+  return <button onClick={onClick} style={{background:'none',border:'none',cursor:'pointer',padding:6,color:danger?T.r:T.txS,display:'flex',alignItems:'center'}}>{children}</button>;
+}
+const TrashIcon=()=><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="3,6 5,6 21,6"/><path d="M19,6l-1,14H6L5,6"/><path d="M10,11v6M14,11v6"/><path d="M9,6V4h6v2"/></svg>;
+const ChevRight=()=><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={T.txS} strokeWidth="2"><polyline points="9,18 15,12 9,6"/></svg>;
+
+/* ── TODAY ───────────────────────────────────────────────── */
+function TodayView({state,go}){
+  const {tasks,workouts,pft,user,clothing,workoutCats}=state;
+  const season=new Date().getMonth()<6?'pft':'cft';
+  const testDate=season==='pft'?'2026-06-15':'2026-10-15';
+  const days=daysFrom(testDate);
+  const open=tasks.filter(t=>t.status==='todo').sort(taskSort).slice(0,5);
+  const todayW=workouts.find(w=>w.date===today());
+  const streak=(()=>{const s=[...workouts].sort((a,b)=>b.date.localeCompare(a.date));let c=0,p=null;for(const w of s){if(!p){c=1;p=w.date;continue;}if(Math.round((new Date(p)-new Date(w.date))/86400000)===1){c++;p=w.date;}else break;}return c;})();
+  const monthW=workouts.filter(w=>{const d=new Date(w.date),n=new Date();return d.getMonth()===n.getMonth()&&d.getFullYear()===n.getFullYear();}).length;
+  const urgent=clothing.filter(c=>c.type==='need_to_return'&&!c.done&&c.deadline&&daysFrom(c.deadline)<=5&&daysFrom(c.deadline)>=0);
+  const now=new Date();const h=now.getHours();
+  const greeting=h<12?'Good morning':h<17?'Good afternoon':'Good evening';
+  const catName=id=>workoutCats.find(c=>c.id===id)?.name||id;
+  const catColor=id=>workoutCats.find(c=>c.id===id)?.color||T.ac;
+
+  return <div style={{display:'flex',flexDirection:'column',gap:16}} className="slide-up">
+    <div>
+      <p style={{fontSize:12,fontWeight:500,color:T.txS,letterSpacing:'0.04em',marginBottom:4}}>{now.toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric'})}</p>
+      <h1 style={{fontSize:30,fontWeight:400,color:T.tx,fontFamily:T.serif,lineHeight:1.1}}>{greeting}</h1>
+    </div>
+
+    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10}}>
+      <div onClick={()=>go('fitness')} style={{background:T.ac,borderRadius:18,padding:'18px 16px',cursor:'pointer'}}>
+        <p style={{fontSize:10,fontWeight:700,color:'rgba(255,255,255,0.6)',textTransform:'uppercase',letterSpacing:'0.12em',marginBottom:6}}>{season.toUpperCase()} Test</p>
+        <p style={{fontSize:38,fontWeight:700,color:'#fff',fontFamily:T.serif,lineHeight:1}}>{days}</p>
+        <p style={{fontSize:11,color:'rgba(255,255,255,0.7)',marginTop:4,fontWeight:500}}>days to go</p>
+      </div>
+      <div onClick={()=>go('fitness')} style={{background:streak>=3?'#FFF7ED':T.bgS,borderRadius:18,padding:'18px 16px',cursor:'pointer'}}>
+        <p style={{fontSize:10,fontWeight:700,color:streak>=3?'#92400E':T.txS,textTransform:'uppercase',letterSpacing:'0.12em',marginBottom:6}}>{streak>=2?'Streak':'Month'}</p>
+        <p style={{fontSize:38,fontWeight:700,color:streak>=3?'#EA580C':T.tx,fontFamily:T.serif,lineHeight:1}}>{streak>=2?streak:monthW}</p>
+        <p style={{fontSize:11,color:streak>=3?'#B45309':T.txM,marginTop:4,fontWeight:500}}>{streak>=2?`days 🔥`:'workouts'}</p>
+      </div>
+    </div>
+
+    {urgent.map(item=><div key={item.id} onClick={()=>go('clothing')} style={{background:T.rS,borderRadius:14,padding:'12px 16px',borderLeft:`3px solid ${T.r}`,cursor:'pointer',display:'flex',alignItems:'center',gap:12}}>
+      <span style={{fontSize:18}}>⚠️</span>
+      <div><p style={{fontSize:13,fontWeight:700,color:'#991B1B'}}>Return: {item.title}</p><p style={{fontSize:12,color:'#B91C1C',marginTop:2}}>{daysFrom(item.deadline)}d left · {fmtD(item.deadline)}</p></div>
+    </div>)}
+
+    <Card onClick={()=>go('fitness')} style={{padding:'14px 16px'}}>
+      <div style={{display:'flex',alignItems:'center',gap:12}}>
+        <div style={{width:38,height:38,borderRadius:10,background:todayW?catColor(todayW.type)+'20':T.bgS,display:'flex',alignItems:'center',justifyContent:'center',fontSize:18,flexShrink:0}}>💪</div>
+        <div style={{flex:1}}>
+          {todayW?<><p style={{fontSize:14,fontWeight:600,color:T.tx}}>{catName(todayW.type)} · {todayW.duration_minutes}min ✓</p><p style={{fontSize:12,color:T.txS,marginTop:2}}>{monthW} workouts this month</p></>
+          :<><p style={{fontSize:14,fontWeight:500,color:T.txM}}>No workout logged today</p><p style={{fontSize:12,color:T.txS,marginTop:2}}>{monthW} this month</p></>}
+        </div>
+        <ChevRight/>
+      </div>
+    </Card>
+
+    <div>
+      <SecLabel action="All →" onAction={()=>go('tasks')}>Today's Focus</SecLabel>
+      {open.length===0?<p style={{fontSize:14,color:T.txS,textAlign:'center',padding:'28px 0'}}>All clear ✓</p>:
+        <div style={{display:'flex',flexDirection:'column',gap:8}}>
+          {open.map(t=>{const du=dueTag(t);return <div key={t.id} onClick={()=>go('tasks')} style={{background:T.card,borderRadius:14,padding:'12px 14px',borderLeft:`3px solid ${PC[t.priority||2]}`,boxShadow:'0 1px 3px rgba(0,0,0,0.04)',cursor:'pointer'}}>
+            <p style={{fontSize:14,fontWeight:600,color:T.tx}}>{t.title}</p>
+            <div style={{display:'flex',gap:6,marginTop:6,alignItems:'center',flexWrap:'wrap'}}>
+              <Chip label={t.context}/>
+              {du&&<span style={{fontSize:11,fontWeight:700,padding:'2px 7px',borderRadius:6,color:du.c,background:du.bg}}>{du.tx}</span>}
+            </div>
+          </div>;})}
+        </div>}
+    </div>
+  </div>;
+}
+
+/* ── TASKS ───────────────────────────────────────────────── */
+function TasksView({state,setState}){
+  const {tasks,categories}=state;
+  const [ctx,setCtx]=useState('all');
+  const [title,setTitle]=useState('');
+  const [context,setContext]=useState(categories[0]);
+  const [priority,setPriority]=useState(2);
+  const [due,setDue]=useState('');
+  const [showOpts,setShowOpts]=useState(false);
+  const [completing,setCompleting]=useState(new Set());
+  const [editSheet,setEditSheet]=useState(null);
+  const [showNewCat,setShowNewCat]=useState(false);
+  const [newCat,setNewCat]=useState('');
+  const [showDone,setShowDone]=useState(false);
+
+  function save(n){setState(n);saveState(n);}
+  function addTask(){
+    if(!title.trim())return;
+    const t={id:uid(),title:title.trim(),context,priority,due_date:due||null,status:'todo',project_id:null};
+    save({...state,tasks:[t,...state.tasks]});
+    setTitle('');setDue('');setShowOpts(false);
+  }
+  function complete(id){
+    if(completing.has(id))return;
+    if(navigator.vibrate)navigator.vibrate([30,20,50]);
+    setCompleting(s=>new Set([...s,id]));
+    setTimeout(()=>{
+      setState(s=>{const n={...s,tasks:s.tasks.map(t=>t.id===id?{...t,status:'done'}:t)};saveState(n);return n;});
+      setCompleting(s=>{const n=new Set(s);n.delete(id);return n;});
+    },600);
+  }
+  function updateTask(id,fields){save({...state,tasks:state.tasks.map(t=>t.id===id?{...t,...fields}:t)});}
+  function delTask(id){save({...state,tasks:state.tasks.filter(t=>t.id!==id)});setEditSheet(null);}
+  function addCat(){const c=newCat.trim().toLowerCase();if(!c||categories.includes(c))return;save({...state,categories:[...categories,c]});setContext(c);setNewCat('');setShowNewCat(false);}
+
+  const active=tasks.filter(t=>t.status==='todo'&&(ctx==='all'||t.context===ctx)).sort(taskSort);
+  const done=tasks.filter(t=>t.status==='done');
+
+  return <div style={{display:'flex',flexDirection:'column',gap:16}} className="slide-up">
+    <PageTitle>Tasks</PageTitle>
+
+    <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
+      <Pill label="All" count={tasks.filter(t=>t.status==='todo').length} active={ctx==='all'} onClick={()=>setCtx('all')}/>
+      {categories.map(c=><Pill key={c} label={c} count={tasks.filter(t=>t.status==='todo'&&t.context===c).length} active={ctx===c} onClick={()=>setCtx(c)}/>)}
+      <Pill label="+ List" dashed onClick={()=>setShowNewCat(v=>!v)}/>
+    </div>
+    {showNewCat&&<div style={{display:'flex',gap:8}}>
+      <input value={newCat} onChange={e=>setNewCat(e.target.value)} onKeyDown={e=>e.key==='Enter'&&addCat()} placeholder="New list name…" autoFocus
+        style={{flex:1,background:T.bgS,border:`2px solid ${T.ac}`,borderRadius:12,padding:'10px 14px',fontSize:15,color:T.tx,outline:'none',fontFamily:'inherit'}}/>
+      <Btn onClick={addCat} size="sm">Add</Btn>
+    </div>}
+
+    <Card style={{padding:'14px'}}>
+      <div style={{display:'flex',gap:8}}>
+        <input value={title} onChange={e=>setTitle(e.target.value)} onKeyDown={e=>e.key==='Enter'&&addTask()} placeholder="What needs to get done?"
+          style={{flex:1,background:T.bgS,border:'2px solid transparent',borderRadius:12,padding:'10px 14px',fontSize:15,color:T.tx,outline:'none',fontFamily:'inherit'}}/>
+        <Btn onClick={addTask} size="sm">Add</Btn>
+      </div>
+      <button onClick={()=>setShowOpts(v=>!v)} style={{marginTop:10,fontSize:12,fontWeight:600,color:T.txS,background:'none',border:'none',cursor:'pointer',fontFamily:'inherit'}}>
+        {showOpts?'▲ Fewer options':'▼ More options'}
+      </button>
+      {showOpts&&<div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:8,marginTop:10}}>
+        <Sel value={context} onChange={e=>setContext(e.target.value)}>{categories.map(c=><option key={c} value={c}>{c}</option>)}</Sel>
+        <Sel value={priority} onChange={e=>setPriority(Number(e.target.value))}>
+          <option value={1}>🔴 Critical</option><option value={2}>🟡 Normal</option><option value={3}>⚪ Low</option>
+        </Sel>
+        <input type="date" value={due} onChange={e=>setDue(e.target.value)} style={{background:T.bgS,border:'none',borderRadius:12,padding:'10px 10px',fontSize:13,color:T.tx,outline:'none',fontFamily:'inherit',boxSizing:'border-box'}}/>
+      </div>}
+    </Card>
+
+    <div style={{display:'flex',flexDirection:'column',gap:8}}>
+      {active.length===0&&<Empty icon="✓" text="All done here"/>}
+      {active.map(t=>{
+        const du=dueTag(t);const isC=completing.has(t.id);
+        return <div key={t.id} className={isC?'task-out':''} style={{background:T.card,borderRadius:14,padding:'12px 14px',borderLeft:`3px solid ${PC[t.priority||2]}`,boxShadow:'0 1px 3px rgba(0,0,0,0.04)',display:'flex',alignItems:'flex-start',gap:12}}>
+          <div style={{paddingTop:1}}><Check on={isC} onClick={()=>complete(t.id)}/></div>
+          <div style={{flex:1,minWidth:0}} onClick={()=>setEditSheet(t)}>
+            <p style={{fontSize:14,fontWeight:600,color:T.tx,cursor:'pointer'}}>{t.title}</p>
+            <div style={{display:'flex',flexWrap:'wrap',gap:6,marginTop:6,alignItems:'center'}}>
+              <Chip label={t.context}/>
+              {du&&<span style={{fontSize:11,fontWeight:700,padding:'2px 7px',borderRadius:6,color:du.c,background:du.bg}}>{du.tx}</span>}
+            </div>
+          </div>
+          <IconBtn onClick={()=>delTask(t.id)} danger><TrashIcon/></IconBtn>
+        </div>;
+      })}
+    </div>
+
+    {done.length>0&&<div>
+      <SecLabel action={showDone?'Hide':`Show (${done.length})`} onAction={()=>setShowDone(v=>!v)}>Completed</SecLabel>
+      {showDone&&<div style={{display:'flex',flexDirection:'column',gap:4}}>
+        {done.slice(0,15).map(t=><div key={t.id} style={{display:'flex',alignItems:'center',gap:10,padding:'8px 14px',opacity:.4}}>
+          <Check on={true} onClick={()=>{}}/>
+          <span style={{fontSize:14,textDecoration:'line-through',color:T.txM}}>{t.title}</span>
+        </div>)}
+      </div>}
+    </div>}
+
+    {editSheet&&<Sheet onClose={()=>setEditSheet(null)}>
+      <div style={{display:'flex',flexDirection:'column',gap:14}}>
+        <p style={{fontSize:16,fontWeight:700,color:T.tx}}>Edit Task</p>
+        <Inp label="Title" value={editSheet.title} onChange={e=>{const v=e.target.value;setEditSheet(s=>({...s,title:v}));updateTask(editSheet.id,{title:v});}}/>
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10}}>
+          <Sel label="List" value={editSheet.context} onChange={e=>{const v=e.target.value;setEditSheet(s=>({...s,context:v}));updateTask(editSheet.id,{context:v});}}>
+            {categories.map(c=><option key={c} value={c}>{c}</option>)}
+          </Sel>
+          <Sel label="Priority" value={editSheet.priority||2} onChange={e=>{const v=Number(e.target.value);setEditSheet(s=>({...s,priority:v}));updateTask(editSheet.id,{priority:v});}}>
+            <option value={1}>🔴 Critical</option><option value={2}>🟡 Normal</option><option value={3}>⚪ Low</option>
+          </Sel>
+        </div>
+        <Inp label="Due date" type="date" value={editSheet.due_date||''} onChange={e=>{const v=e.target.value||null;setEditSheet(s=>({...s,due_date:v}));updateTask(editSheet.id,{due_date:v});}}/>
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10}}>
+          <Btn v="soft" onClick={()=>setEditSheet(null)}>Done</Btn>
+          <Btn v="danger" onClick={()=>delTask(editSheet.id)}>Delete</Btn>
+        </div>
+      </div>
+    </Sheet>}
+  </div>;
+}
+
+/* ── PROJECTS ────────────────────────────────────────────── */
+function ProjectsView({state,setState}){
+  const {projects,tasks}=state;
+  const [sel,setSel]=useState(null);
+  const [showAdd,setShowAdd]=useState(false);
+  const [form,setForm]=useState({title:'',notes:''});
+  const [taskIn,setTaskIn]=useState('');
+  const [taskP,setTaskP]=useState(2);
+  const [taskDue,setTaskDue]=useState('');
+  function save(n){setState(n);saveState(n);}
+  function addProject(){
+    if(!form.title.trim())return;
+    const p={id:uid(),title:form.title.trim(),notes:form.notes,updated_at:today(),status:'active'};
+    save({...state,projects:[p,...state.projects]});
+    setShowAdd(false);setForm({title:'',notes:''});
+  }
+  function updateProject(id,fields){save({...state,projects:state.projects.map(p=>p.id===id?{...p,...fields,updated_at:today()}:p)});}
+  function delProject(id){save({...state,projects:state.projects.filter(p=>p.id!==id),tasks:state.tasks.filter(t=>t.project_id!==id)});setSel(null);}
+  function addTask(){
+    if(!taskIn.trim()||!sel)return;
+    const t={id:uid(),title:taskIn.trim(),context:'anywhere',priority:taskP,due_date:taskDue||null,status:'todo',project_id:sel};
+    save({...state,tasks:[...state.tasks,t]});setTaskIn('');setTaskDue('');
+  }
+  function completeTask(id){save({...state,tasks:state.tasks.map(t=>t.id===id?{...t,status:'done'}:t)});}
+  function delTask(id){save({...state,tasks:state.tasks.filter(t=>t.id!==id)});}
+
+  if(sel){
+    const proj=projects.find(p=>p.id===sel);if(!proj)return null;
+    const pt=tasks.filter(t=>t.project_id===proj.id).sort(taskSort);
+    const todo=pt.filter(t=>t.status==='todo');const dn=pt.filter(t=>t.status==='done');
+    return <div style={{display:'flex',flexDirection:'column',gap:16}} className="slide-up">
+      <div style={{display:'flex',alignItems:'center',gap:10}}>
+        <Back onClick={()=>setSel(null)}/>
+        <input defaultValue={proj.title} onBlur={e=>updateProject(proj.id,{title:e.target.value})} onKeyDown={e=>e.key==='Enter'&&e.target.blur()}
+          style={{flex:1,fontSize:22,fontWeight:700,color:T.tx,background:'transparent',border:'none',outline:'none',fontFamily:T.serif}}/>
+        <IconBtn onClick={()=>delProject(proj.id)} danger><TrashIcon/></IconBtn>
+      </div>
+      {pt.length>0&&<div>
+        <div style={{display:'flex',justifyContent:'space-between',marginBottom:6}}>
+          <span style={{fontSize:12,color:T.txS}}>{dn.length}/{pt.length} complete</span>
+          <span style={{fontSize:12,fontWeight:700,color:T.ac}}>{Math.round(dn.length/pt.length*100)}%</span>
+        </div>
+        <Bar value={dn.length} max={pt.length} h={6}/>
+      </div>}
+      <Card style={{padding:'14px'}}>
+        <SecLabel>Notes</SecLabel>
+        <textarea defaultValue={proj.notes} onBlur={e=>updateProject(proj.id,{notes:e.target.value})} rows={4} placeholder="Add notes…"
+          style={{width:'100%',boxSizing:'border-box',background:'transparent',border:'none',outline:'none',resize:'none',fontSize:14,color:T.txM,fontFamily:'inherit',lineHeight:1.6}}/>
+      </Card>
+      <div>
+        <SecLabel>{todo.length} open task{todo.length!==1?'s':''}</SecLabel>
+        <div style={{display:'flex',flexDirection:'column',gap:8,marginBottom:12}}>
+          {todo.map(t=>{const du=dueTag(t);return <div key={t.id} style={{background:T.bgS,borderRadius:14,padding:'12px 14px',borderLeft:`3px solid ${PC[t.priority||2]}`,display:'flex',alignItems:'center',gap:12}}>
+            <Check on={false} onClick={()=>completeTask(t.id)}/>
+            <div style={{flex:1}}>
+              <p style={{fontSize:14,fontWeight:600,color:T.tx}}>{t.title}</p>
+              {du&&<span style={{fontSize:11,fontWeight:700,marginTop:4,display:'block',color:du.c}}>{du.tx}</span>}
+            </div>
+            <IconBtn onClick={()=>delTask(t.id)} danger><TrashIcon/></IconBtn>
+          </div>;})}
+          {dn.map(t=><div key={t.id} style={{display:'flex',alignItems:'center',gap:10,padding:'8px 14px',opacity:.35}}>
+            <Check on={true} onClick={()=>{}}/><span style={{fontSize:14,textDecoration:'line-through',color:T.txM}}>{t.title}</span>
+          </div>)}
+        </div>
+        <div style={{display:'flex',flexDirection:'column',gap:8}}>
+          <input value={taskIn} onChange={e=>setTaskIn(e.target.value)} onKeyDown={e=>e.key==='Enter'&&addTask()} placeholder="Add task…"
+            style={{background:T.bgS,border:`2px solid ${T.border}`,borderRadius:12,padding:'10px 14px',fontSize:15,color:T.tx,outline:'none',fontFamily:'inherit',width:'100%',boxSizing:'border-box'}}/>
+          <div style={{display:'flex',gap:8}}>
+            <Sel value={taskP} onChange={e=>setTaskP(Number(e.target.value))} style={{flex:1}}>
+              <option value={1}>🔴 Critical</option><option value={2}>🟡 Normal</option><option value={3}>⚪ Low</option>
+            </Sel>
+            <input type="date" value={taskDue} onChange={e=>setTaskDue(e.target.value)} style={{flex:1,background:T.bgS,border:'none',borderRadius:12,padding:'10px 10px',fontSize:13,color:T.tx,outline:'none',fontFamily:'inherit'}}/>
+            <Btn onClick={addTask} size="sm">Add</Btn>
+          </div>
+        </div>
+      </div>
+    </div>;
+  }
+
+  return <div style={{display:'flex',flexDirection:'column',gap:16}} className="slide-up">
+    <div style={{display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+      <PageTitle>Projects</PageTitle>
+      <Btn onClick={()=>setShowAdd(v=>!v)} v="ghost" size="sm">+ New</Btn>
+    </div>
+    {showAdd&&<Card style={{padding:'16px'}}>
+      <div style={{display:'flex',flexDirection:'column',gap:12}}>
+        <Inp label="Title" value={form.title} onChange={e=>setForm({...form,title:e.target.value})}/>
+        <Inp label="Notes" area rows={3} value={form.notes} onChange={e=>setForm({...form,notes:e.target.value})}/>
+        <Btn onClick={addProject} full>Create Project</Btn>
+      </div>
+    </Card>}
+    {projects.length===0&&<Empty icon="📁" text="No projects yet"/>}
+    {projects.map(p=>{
+      const all=tasks.filter(t=>t.project_id===p.id);
+      const dn=all.filter(t=>t.status==='done');
+      const urgent=all.filter(t=>t.status==='todo'&&t.due_date&&daysFrom(t.due_date)<=7).length;
+      return <Card key={p.id} onClick={()=>setSel(p.id)} accent style={{padding:'16px'}}>
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start'}}>
+          <p style={{fontSize:17,fontWeight:700,color:T.tx,fontFamily:T.serif}}>{p.title}</p>
+          {urgent>0&&<span style={{fontSize:11,fontWeight:700,padding:'3px 8px',borderRadius:8,background:T.wS,color:T.w}}>{urgent} due soon</span>}
+        </div>
+        {p.notes&&<p style={{fontSize:13,color:T.txM,marginTop:4,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{p.notes}</p>}
+        {all.length>0&&<div style={{marginTop:12}}>
+          <Bar value={dn.length} max={all.length} h={4}/>
+          <p style={{fontSize:11,color:T.txS,marginTop:4}}>{dn.length}/{all.length} tasks</p>
+        </div>}
+      </Card>;
+    })}
+  </div>;
+}
+
+/* ── TRIPS ───────────────────────────────────────────────── */
+function TripsView({state,setState}){
+  const {trips,checklist}=state;
+  const [sel,setSel]=useState(null);
+  const [showAdd,setShowAdd]=useState(false);
+  const [form,setForm]=useState({destination:'',start_date:'',end_date:'',notes:''});
+  const [tab,setTab]=useState('info');
+  const [checkIn,setCheckIn]=useState('');
+  const [lightbox,setLightbox]=useState(null);
+  const fileRef=useRef(null);
+  function save(n){setState(n);saveState(n);}
+  function addTrip(){if(!form.destination.trim())return;const t={id:uid(),...form,outfit_photos:[]};save({...state,trips:[...state.trips,t].sort((a,b)=>a.start_date.localeCompare(b.start_date))});setShowAdd(false);setForm({destination:'',start_date:'',end_date:'',notes:''});}
+  function updateTrip(id,fields){save({...state,trips:state.trips.map(t=>t.id===id?{...t,...fields}:t)});}
+  function delTrip(id){save({...state,trips:state.trips.filter(t=>t.id!==id),checklist:state.checklist.filter(c=>c.trip_id!==id)});setSel(null);}
+  function addCheck(){if(!checkIn.trim()||!sel)return;const c={id:uid(),trip_id:sel,title:checkIn.trim(),completed:false};save({...state,checklist:[...state.checklist,c]});setCheckIn('');}
+  function toggleCheck(id){save({...state,checklist:state.checklist.map(c=>c.id===id?{...c,completed:!c.completed}:c)});}
+  function delCheck(id){save({...state,checklist:state.checklist.filter(c=>c.id!==id)});}
+
+  function uploadOutfit(tripId,file){
+    if(!file)return;
+    const img=new Image();const url=URL.createObjectURL(file);
+    img.onload=()=>{
+      const MAX=800;let w=img.width,h=img.height;
+      if(w>MAX){h=Math.round(h*MAX/w);w=MAX;}
+      const cv=document.createElement('canvas');cv.width=w;cv.height=h;
+      cv.getContext('2d').drawImage(img,0,0,w,h);
+      const data=cv.toDataURL('image/jpeg',0.75);
+      URL.revokeObjectURL(url);
+      save({...state,trips:state.trips.map(t=>t.id===tripId?{...t,outfit_photos:[...(t.outfit_photos||[]),{id:uid(),data}]}:t)});
+    };img.src=url;
+  }
+  function delOutfit(tripId,photoId){save({...state,trips:state.trips.map(t=>t.id===tripId?{...t,outfit_photos:(t.outfit_photos||[]).filter(p=>p.id!==photoId)}:t)});}
+
+  const sortedTrips=[...trips].sort((a,b)=>a.start_date.localeCompare(b.start_date));
+
+  if(sel){
+    const trip=trips.find(t=>t.id===sel);if(!trip)return null;
+    const checks=checklist.filter(c=>c.trip_id===sel);
+    const photos=trip.outfit_photos||[];
+    const sd=new Date(trip.start_date+'T12:00:00');const daysAway=daysFrom(trip.start_date);
+    return <div style={{display:'flex',flexDirection:'column',gap:16}} className="slide-up">
+      <div style={{display:'flex',alignItems:'center',gap:10}}>
+        <Back onClick={()=>setSel(null)}/>
+        <div style={{flex:1}}>
+          <input defaultValue={trip.destination} onBlur={e=>updateTrip(trip.id,{destination:e.target.value})} onKeyDown={e=>e.key==='Enter'&&e.target.blur()}
+            style={{fontSize:20,fontWeight:700,color:T.tx,background:'transparent',border:'none',outline:'none',fontFamily:T.serif,width:'100%'}}/>
+          <p style={{fontSize:12,color:T.txS}}>{fmtDLong(trip.start_date)} – {fmtDLong(trip.end_date)} · {daysAway>0?`${daysAway}d away`:daysAway===0?'Today!':'Past'}</p>
+        </div>
+        <IconBtn onClick={()=>delTrip(trip.id)} danger><TrashIcon/></IconBtn>
+      </div>
+      <TabBar tabs={[['info','Info'],['packing','Packing'],['outfits','Outfits']]} active={tab} onChange={setTab}/>
+
+      {tab==='info'&&<div style={{display:'flex',flexDirection:'column',gap:12}}>
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10}}>
+          <Inp label="Start date" type="date" value={trip.start_date} onChange={e=>updateTrip(trip.id,{start_date:e.target.value})}/>
+          <Inp label="End date" type="date" value={trip.end_date} onChange={e=>updateTrip(trip.id,{end_date:e.target.value})}/>
+        </div>
+        <Inp label="Notes" area rows={5} value={trip.notes} onChange={e=>updateTrip(trip.id,{notes:e.target.value})} onBlur={e=>updateTrip(trip.id,{notes:e.target.value})}/>
+      </div>}
+
+      {tab==='packing'&&<div>
+        <div style={{display:'flex',flexDirection:'column',gap:8,marginBottom:12}}>
+          {checks.length===0&&<Empty icon="🎒" text="No packing list yet"/>}
+          {checks.map(c=><div key={c.id} style={{display:'flex',alignItems:'center',gap:12,padding:'10px 14px',background:T.card,borderRadius:12,boxShadow:'0 1px 3px rgba(0,0,0,0.04)'}}>
+            <Check on={c.completed} onClick={()=>toggleCheck(c.id)}/>
+            <span style={{flex:1,fontSize:14,color:T.tx,textDecoration:c.completed?'line-through':'none',opacity:c.completed?.5:1}}>{c.title}</span>
+            <IconBtn onClick={()=>delCheck(c.id)}><TrashIcon/></IconBtn>
+          </div>)}
+        </div>
+        <div style={{display:'flex',gap:8}}>
+          <input value={checkIn} onChange={e=>setCheckIn(e.target.value)} onKeyDown={e=>e.key==='Enter'&&addCheck()} placeholder="Add item…"
+            style={{flex:1,background:T.bgS,border:'2px solid transparent',borderRadius:12,padding:'10px 14px',fontSize:15,color:T.tx,outline:'none',fontFamily:'inherit'}}/>
+          <Btn onClick={addCheck} size="sm">Add</Btn>
+        </div>
+      </div>}
+
+      {tab==='outfits'&&<div>
+        <input ref={fileRef} type="file" accept="image/*" multiple style={{display:'none'}} onChange={e=>{for(const f of e.target.files)uploadOutfit(trip.id,f);e.target.value='';}}/>
+        <Btn onClick={()=>fileRef.current?.click()} full v="ghost" style={{marginBottom:16}}>📷 Add Outfit Photos</Btn>
+        {photos.length===0?<Empty icon="👗" text="Upload outfit inspiration for this trip"/>:
+        <div style={{columns:2,gap:8}}>
+          {photos.map(p=><div key={p.id} style={{breakInside:'avoid',marginBottom:8,position:'relative'}}>
+            <img src={p.data} alt="" style={{width:'100%',borderRadius:12,display:'block',cursor:'pointer'}} onClick={()=>setLightbox(p.data)}/>
+            <button onClick={()=>delOutfit(trip.id,p.id)} style={{position:'absolute',top:6,right:6,background:'rgba(0,0,0,0.5)',border:'none',borderRadius:'50%',width:26,height:26,display:'flex',alignItems:'center',justifyContent:'center',cursor:'pointer',color:'#fff',fontSize:12}}>×</button>
+          </div>)}
+        </div>}
+      </div>}
+
+      {lightbox&&<div onClick={()=>setLightbox(null)} style={{position:'fixed',inset:0,zIndex:300,background:'rgba(0,0,0,0.9)',display:'flex',alignItems:'center',justifyContent:'center',padding:16}}>
+        <img src={lightbox} alt="" style={{maxWidth:'100%',maxHeight:'90vh',borderRadius:12,objectFit:'contain'}}/>
+      </div>}
+    </div>;
+  }
+
+  return <div style={{display:'flex',flexDirection:'column',gap:16}} className="slide-up">
+    <div style={{display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+      <PageTitle>Trips</PageTitle>
+      <Btn onClick={()=>setShowAdd(v=>!v)} v="ghost" size="sm">+ New</Btn>
+    </div>
+    {showAdd&&<Card style={{padding:'16px'}}><div style={{display:'flex',flexDirection:'column',gap:12}}>
+      <Inp label="Destination" value={form.destination} onChange={e=>setForm({...form,destination:e.target.value})}/>
+      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10}}>
+        <Inp label="Start" type="date" value={form.start_date} onChange={e=>setForm({...form,start_date:e.target.value})}/>
+        <Inp label="End" type="date" value={form.end_date} onChange={e=>setForm({...form,end_date:e.target.value})}/>
+      </div>
+      <Inp label="Notes" area rows={2} value={form.notes} onChange={e=>setForm({...form,notes:e.target.value})}/>
+      <Btn onClick={addTrip} full>Add Trip</Btn>
+    </div></Card>}
+    {sortedTrips.length===0&&<Empty icon="✈️" text="No trips planned"/>}
+    {sortedTrips.map(trip=>{
+      const daysAway=daysFrom(trip.start_date);
+      const past=daysAway<0;
+      const photos=trip.outfit_photos||[];
+      return <Card key={trip.id} onClick={()=>{setSel(trip.id);setTab('info');}} style={{padding:'16px',opacity:past?.6:1}}>
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:8}}>
+          <div>
+            <p style={{fontSize:17,fontWeight:700,color:T.tx,fontFamily:T.serif}}>{trip.destination}</p>
+            <p style={{fontSize:12,color:T.txS,marginTop:2}}>{fmtD(trip.start_date)} – {fmtD(trip.end_date)}</p>
+          </div>
+          <span style={{fontSize:12,fontWeight:700,padding:'4px 10px',borderRadius:10,background:past?T.bgS:daysAway<=30?T.acS:T.bgS,color:past?T.txS:daysAway<=30?T.ac:T.txM,flexShrink:0}}>
+            {past?'Past':daysAway===0?'Today!':daysAway===1?'Tomorrow':`${daysAway}d`}
+          </span>
+        </div>
+        {photos.length>0&&<div style={{display:'flex',gap:4,marginTop:8}}>
+          {photos.slice(0,4).map(p=><img key={p.id} src={p.data} alt="" style={{width:44,height:44,borderRadius:8,objectFit:'cover'}}/>)}
+          {photos.length>4&&<div style={{width:44,height:44,borderRadius:8,background:T.bgS,display:'flex',alignItems:'center',justifyContent:'center',fontSize:11,fontWeight:700,color:T.txM}}>+{photos.length-4}</div>}
+        </div>}
+      </Card>;
+    })}
+  </div>;
+}
+
+/* ── CLOTHING ────────────────────────────────────────────── */
+function ClothingView({state,setState}){
+  const {clothing,inspo}=state;
+  const [tab,setTab]=useState('outfit_idea');
+  const [showAdd,setShowAdd]=useState(false);
+  const [form,setForm]=useState({title:'',notes:'',price:'',deadline:'',photo:null});
+  const [lightbox,setLightbox]=useState(null);
+  const [editItem,setEditItem]=useState(null);
+  const fileRef=useRef(null);
+  const inspoRef=useRef(null);
+  function save(n){setState(n);saveState(n);}
+
+  function compressImage(file,cb){
+    const img=new Image();const url=URL.createObjectURL(file);
+    img.onload=()=>{
+      const MAX=600;let w=img.width,h=img.height;
+      if(w>h){if(w>MAX){h=Math.round(h*MAX/w);w=MAX;}}else{if(h>MAX){w=Math.round(w*MAX/h);h=MAX;}}
+      const cv=document.createElement('canvas');cv.width=w;cv.height=h;
+      cv.getContext('2d').drawImage(img,0,0,w,h);
+      URL.revokeObjectURL(url);cb(cv.toDataURL('image/jpeg',0.72));
+    };img.src=url;
+  }
+
+  function handlePhoto(file){if(!file)return;compressImage(file,data=>setForm(f=>({...f,photo:data})));}
+  function addItem(){
+    const item={id:uid(),type:tab,title:form.title.trim(),notes:form.notes,price:form.price||null,deadline:form.deadline||null,photo:form.photo,done:false};
+    save({...state,clothing:[item,...state.clothing]});
+    setShowAdd(false);setForm({title:'',notes:'',price:'',deadline:'',photo:null});
+  }
+  function delItem(id){save({...state,clothing:state.clothing.filter(c=>c.id!==id)});}
+  function markDone(id){save({...state,clothing:state.clothing.map(c=>c.id===id?{...c,done:true}:c)});}
+  function updateItem(id,fields){save({...state,clothing:state.clothing.map(c=>c.id===id?{...c,...fields}:c)});}
+
+  function addInspo(file){
+    if(!file)return;
+    compressImage(file,data=>{
+      const item={id:uid(),photo:data,note:'',season:[],weather:[],fancy:[]};
+      save({...state,inspo:[item,...state.inspo]});
+    });
+  }
+  function delInspo(id){save({...state,inspo:state.inspo.filter(i=>i.id!==id)});}
+
+  const items=clothing.filter(c=>c.type===tab&&!c.done);
+  const actionLabel={outfit_idea:'Archive',want_to_buy:'Mark bought',need_to_return:'Mark returned'}[tab];
+
+  return <div style={{display:'flex',flexDirection:'column',gap:16}} className="slide-up">
+    <PageTitle>Clothing</PageTitle>
+    <TabBar tabs={[['outfit_idea','Outfits'],['want_to_buy','Wishlist'],['need_to_return','Returns'],['inspo','Inspo']]} active={tab} onChange={k=>{setTab(k);setShowAdd(false);}}/>
+
+    {tab==='inspo'?<div>
+      <input ref={inspoRef} type="file" accept="image/*" multiple style={{display:'none'}} onChange={e=>{for(const f of e.target.files)addInspo(f);e.target.value='';}}/>
+      <Btn onClick={()=>inspoRef.current?.click()} full v="ghost" style={{marginBottom:16}}>📷 Upload Inspo Photos</Btn>
+      {inspo.length===0?<Empty icon="🌟" text="Upload outfit inspiration photos"/>:
+      <div style={{columns:2,gap:8,columnFill:'balance'}}>
+        {inspo.map(item=><div key={item.id} style={{breakInside:'avoid',marginBottom:8,position:'relative'}}>
+          <img src={item.photo} alt="" style={{width:'100%',borderRadius:12,display:'block',cursor:'pointer'}} onClick={()=>setLightbox(item.photo)}/>
+          <button onClick={()=>delInspo(item.id)} style={{position:'absolute',top:6,right:6,background:'rgba(0,0,0,0.5)',border:'none',borderRadius:'50%',width:26,height:26,display:'flex',alignItems:'center',justifyContent:'center',cursor:'pointer',color:'#fff',fontSize:14}}>×</button>
+        </div>)}
+      </div>}
+    </div>:<>
+      <Btn onClick={()=>setShowAdd(v=>!v)} full v="ghost">+ Add</Btn>
+      {showAdd&&<Card style={{padding:'16px'}}><div style={{display:'flex',flexDirection:'column',gap:12}}>
+        <Inp label="Title" value={form.title} onChange={e=>setForm({...form,title:e.target.value})}/>
+        <Inp label="Notes" value={form.notes} onChange={e=>setForm({...form,notes:e.target.value})}/>
+        {tab==='want_to_buy'&&<Inp label="Est. price ($)" type="number" value={form.price} onChange={e=>setForm({...form,price:e.target.value})}/>}
+        {tab==='need_to_return'&&<Inp label="Deadline" type="date" value={form.deadline} onChange={e=>setForm({...form,deadline:e.target.value})}/>}
+        {tab==='outfit_idea'&&<div>
+          <label style={{display:'block',fontSize:11,fontWeight:700,textTransform:'uppercase',letterSpacing:'0.1em',color:T.txS,marginBottom:6}}>Photo</label>
+          <input ref={fileRef} type="file" accept="image/*" style={{display:'none'}} onChange={e=>handlePhoto(e.target.files[0])}/>
+          {form.photo?<div style={{position:'relative'}}>
+            <img src={form.photo} alt="" style={{width:'100%',borderRadius:12,maxHeight:200,objectFit:'cover'}}/>
+            <button onClick={()=>setForm(f=>({...f,photo:null}))} style={{position:'absolute',top:6,right:6,background:'rgba(0,0,0,0.5)',border:'none',borderRadius:'50%',width:26,height:26,display:'flex',alignItems:'center',justifyContent:'center',cursor:'pointer',color:'#fff'}}>×</button>
+          </div>:<button onClick={()=>fileRef.current?.click()} style={{width:'100%',padding:'32px',borderRadius:12,background:T.bgS,border:`2px dashed ${T.border}`,cursor:'pointer',fontSize:13,color:T.txM,fontWeight:600,display:'flex',flexDirection:'column',alignItems:'center',gap:6}}>
+            <span style={{fontSize:24}}>📷</span>Tap to upload
+          </button>}
+        </div>}
+        <Btn onClick={addItem} full>Save</Btn>
+      </div></Card>}
+      <div style={{display:'flex',flexDirection:'column',gap:10}}>
+        {items.length===0&&<Empty icon="👗" text="Nothing here yet"/>}
+        {items.map(item=>{
+          const urg=item.deadline&&daysFrom(item.deadline)<=3;
+          return <Card key={item.id} style={{padding:'14px'}}>
+            <div style={{display:'flex',gap:12,alignItems:'flex-start'}}>
+              {item.photo&&<img src={item.photo} alt="" onClick={()=>setLightbox(item.photo)} style={{width:60,height:60,borderRadius:10,objectFit:'cover',flexShrink:0,cursor:'pointer'}}/>}
+              <div style={{flex:1,minWidth:0}}>
+                <input defaultValue={item.title} onBlur={e=>updateItem(item.id,{title:e.target.value})} onKeyDown={e=>e.key==='Enter'&&e.target.blur()}
+                  style={{fontSize:14,fontWeight:700,color:T.tx,background:'transparent',border:'none',outline:'none',width:'100%',fontFamily:'inherit'}}/>
+                {item.notes&&<p style={{fontSize:13,color:T.txM,marginTop:2}}>{item.notes}</p>}
+                {item.price&&<p style={{fontSize:12,fontWeight:600,color:T.txS,marginTop:2}}>~${item.price}</p>}
+                {item.deadline&&<p style={{fontSize:12,fontWeight:700,marginTop:4,color:urg?T.r:T.w}}>Due {fmtD(item.deadline)} · {daysFrom(item.deadline)}d</p>}
+              </div>
+              <div style={{display:'flex',flexDirection:'column',gap:6,flexShrink:0}}>
+                <Btn onClick={()=>markDone(item.id)} v="ghost" size="sm">✓</Btn>
+                <IconBtn onClick={()=>delItem(item.id)} danger><TrashIcon/></IconBtn>
+              </div>
+            </div>
+          </Card>;
+        })}
+      </div>
+    </>}
+
+    {lightbox&&<div onClick={()=>setLightbox(null)} style={{position:'fixed',inset:0,zIndex:300,background:'rgba(0,0,0,0.9)',display:'flex',alignItems:'center',justifyContent:'center',padding:16}}>
+      <img src={lightbox} alt="" style={{maxWidth:'100%',maxHeight:'90vh',borderRadius:12,objectFit:'contain'}}/>
+    </div>}
+  </div>;
+}
+
+/* ── FITNESS ─────────────────────────────────────────────── */
+function FitnessView({state,setState}){
+  const [sub,setSub]=useState('workouts');
+  function save(n){setState(n);saveState(n);}
+  return <div className="slide-up">
+    <PageTitle>Fitness</PageTitle>
+    <TabBar tabs={[['workouts','Workouts'],['pft','PFT'],['cft','CFT']]} active={sub} onChange={setSub}/>
+    {sub==='workouts'&&<WorkoutsTab state={state} save={save}/>}
+    {sub==='pft'&&<PFTTab state={state} save={save}/>}
+    {sub==='cft'&&<CFTTab state={state} save={save}/>}
+  </div>;
+}
+
+function WorkoutsTab({state,save}){
+  const {workouts,workoutCats}=state;
+  const [show,setShow]=useState(false);
+  const [form,setForm]=useState({date:today(),type:workoutCats[0]?.id||'',duration_minutes:'',notes:''});
+  const catColor=id=>workoutCats.find(c=>c.id===id)?.color||T.ac;
+  const catName=id=>workoutCats.find(c=>c.id===id)?.name||id;
+  const streak=(()=>{const s=[...workouts].sort((a,b)=>b.date.localeCompare(a.date));let c=0,p=null;for(const w of s){if(!p){c=1;p=w.date;continue;}if(Math.round((new Date(p)-new Date(w.date))/86400000)===1){c++;p=w.date;}else break;}return c;})();
+  const mo=workouts.filter(w=>{const d=new Date(w.date),n=new Date();return d.getMonth()===n.getMonth()&&d.getFullYear()===n.getFullYear();}).length;
+  function addWorkout(){
+    if(!form.type||!form.duration_minutes)return;
+    const w={id:uid(),...form,duration_minutes:Number(form.duration_minutes)};
+    save({...state,workouts:[w,...state.workouts]});setShow(false);
+  }
+  // heatmap
+  const dateMap={};workouts.forEach(w=>{if(!dateMap[w.date])dateMap[w.date]=w;});
+  const heatmap=(()=>{
+    const td=new Date();td.setHours(0,0,0,0);
+    const start=new Date(td);start.setDate(start.getDate()-11*7);
+    while(start.getDay()!==1)start.setDate(start.getDate()-1);
+    const grid=[];let wk=[];
+    for(let d=new Date(start);d<=td;d.setDate(d.getDate()+1)){
+      const ds=d.toISOString().split('T')[0];const w=dateMap[ds];
+      wk.push({d:ds,has:!!w,color:w?catColor(w.type):null,isToday:ds===today()});
+      if(wk.length===7){grid.push(wk);wk=[];}
+    }
+    if(wk.length){while(wk.length<7)wk.push({d:'',has:false,color:null,isToday:false});grid.push(wk);}
+    return grid;
+  })();
+
+  return <div style={{display:'flex',flexDirection:'column',gap:16}}>
+    <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:10}}>
+      {[{v:streak,l:'Streak',e:streak>=2?'🔥':''},{v:mo,l:'This month'},{v:workouts.length,l:'All time'}].map(({v,l,e})=><div key={l} style={{background:T.bgS,borderRadius:14,padding:'14px',textAlign:'center'}}>
+        <p style={{fontSize:26,fontWeight:700,color:T.ac,fontFamily:T.serif}}>{v}{e}</p>
+        <p style={{fontSize:10,fontWeight:700,textTransform:'uppercase',letterSpacing:'0.1em',color:T.txS,marginTop:2}}>{l}</p>
+      </div>)}
+    </div>
+    <Card style={{padding:'16px'}}>
+      <SecLabel>12-Week Activity</SecLabel>
+      <div style={{display:'flex',gap:3}}>
+        <div style={{display:'flex',flexDirection:'column',gap:3,marginRight:4}}>
+          {['M','T','W','T','F','S','S'].map((d,i)=><div key={i} style={{height:16,display:'flex',alignItems:'center'}}><span style={{fontSize:9,fontWeight:700,color:T.txS}}>{d}</span></div>)}
+        </div>
+        <div style={{flex:1,overflowX:'auto'}}>
+          <div style={{display:'flex',gap:3,minWidth:heatmap.length*20}}>
+            {heatmap.map((wk,wi)=><div key={wi} style={{display:'flex',flexDirection:'column',gap:3}}>
+              {wk.map((day,di)=><div key={di} style={{width:16,height:16,borderRadius:4,background:!day.d?'transparent':day.has?day.color:T.border,outline:day.isToday?`2px solid ${T.tx}`:'none',outlineOffset:-1}}/>)}
+            </div>)}
+          </div>
+        </div>
+      </div>
+    </Card>
+    <Btn onClick={()=>setShow(v=>!v)} full v="ghost">+ Log Workout</Btn>
+    {show&&<Card style={{padding:'16px'}}><div style={{display:'flex',flexDirection:'column',gap:12}}>
+      <Inp label="Date" type="date" value={form.date} onChange={e=>setForm({...form,date:e.target.value})}/>
+      <div>
+        <label style={{display:'block',fontSize:11,fontWeight:700,textTransform:'uppercase',letterSpacing:'0.1em',color:T.txS,marginBottom:8}}>Category</label>
+        <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
+          {workoutCats.map(cat=><button key={cat.id} onClick={()=>setForm({...form,type:cat.id})} style={{padding:'8px 16px',borderRadius:10,border:'none',cursor:'pointer',fontWeight:700,fontSize:13,fontFamily:'inherit',background:form.type===cat.id?cat.color:T.bgS,color:form.type===cat.id?'#fff':T.txM}}>{cat.name}</button>)}
+        </div>
+      </div>
+      <Inp label="Duration (min)" type="number" value={form.duration_minutes} onChange={e=>setForm({...form,duration_minutes:e.target.value})}/>
+      <Inp label="Notes" value={form.notes} onChange={e=>setForm({...form,notes:e.target.value})}/>
+      <Btn onClick={addWorkout} full>Save Workout</Btn>
+    </div></Card>}
+    <SecLabel>Recent</SecLabel>
+    <div style={{display:'flex',flexDirection:'column',gap:8}}>
+      {workouts.slice(0,8).map(w=><div key={w.id} style={{background:T.card,borderRadius:14,padding:'12px 14px',display:'flex',alignItems:'center',gap:12,boxShadow:'0 1px 3px rgba(0,0,0,0.04)'}}>
+        <div style={{width:4,height:36,borderRadius:99,background:catColor(w.type),flexShrink:0}}/>
+        <div style={{flex:1}}>
+          <p style={{fontSize:14,fontWeight:600,color:T.tx}}>{catName(w.type)}</p>
+          <p style={{fontSize:12,color:T.txS,marginTop:2}}>{w.date}{w.notes?` · ${w.notes}`:''}</p>
+        </div>
+        <span style={{fontSize:12,fontWeight:700,padding:'4px 10px',borderRadius:8,background:catColor(w.type)+'18',color:catColor(w.type)}}>{w.duration_minutes}min</span>
+      </div>)}
+    </div>
+  </div>;
+}
+
+function PFTTab({state,save}){
+  const {pft,user}=state;
+  const days=daysFrom('2026-06-15');
+  const [show,setShow]=useState(false);
+  const [form,setForm]=useState({date:today(),pullups:'',plank_m:'',plank_s:'',run_m:'',run_s:''});
+  function bracket(age){if(age<=25)return 0;if(age<=30)return 1;if(age<=35)return 2;if(age<=40)return 3;if(age<=45)return 4;if(age<=50)return 5;return 6;}
+  const FP=[[1,11],[1,10],[1,9],[1,8],[1,7],[1,6],[1,5]];
+  const FK=[[63,210],[63,205],[63,200],[63,195],[63,190],[63,185],[63,180]];
+  const FR=[[1260,1860],[1320,1920],[1380,1980],[1440,2040],[1500,2100],[1560,2160],[1620,2220]];
+  const b=bracket(user.age);
+  const sPU=r=>{const[lo,hi]=FP[b];if(r<lo)return 0;if(r>=hi)return 100;return Math.round(40+((r-lo)/(hi-lo))*60);};
+  const sPL=s=>{const[lo,hi]=FK[b];if(s<lo)return 0;if(s>=hi)return 100;return Math.round(40+((s-lo)/(hi-lo))*60);};
+  const sRN=s=>{const[f,sl]=FR[b];if(s<=f)return 100;if(s>sl)return 0;return Math.round(40+((sl-s)/(sl-f))*60);};
+  function addEntry(){
+    const ps=Number(form.plank_m)*60+Number(form.plank_s);const rs=Number(form.run_m)*60+Number(form.run_s);
+    const e={id:uid(),date:form.date,pullups:Number(form.pullups),plank_s:ps,run_s:rs};
+    save({...state,pft:[e,...state.pft]});setShow(false);
+  }
+  const latest=pft[0];
+  const ls=latest?{p:sPU(latest.pullups),k:sPL(latest.plank_s),r:sRN(latest.run_s)}:null;
+  const total=ls?ls.p+ls.k+ls.r:0;
+  return <div style={{display:'flex',flexDirection:'column',gap:16}}>
+    <Card style={{padding:'16px'}}>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start'}}>
+        <div>
+          <p style={{fontSize:11,fontWeight:700,color:T.txS,textTransform:'uppercase',letterSpacing:'0.1em',marginBottom:4}}>PFT · Jan–Jun · Female</p>
+          <p style={{fontSize:13,color:T.txM}}>Age <input type="number" value={user.age} onChange={e=>save({...state,user:{...user,age:Number(e.target.value)}})} style={{width:44,background:T.bgS,border:'none',borderRadius:8,padding:'3px 8px',fontSize:13,color:T.tx,outline:'none',textAlign:'center',fontFamily:'inherit'}}/> · {days}d to test</p>
+        </div>
+        {ls&&<div style={{textAlign:'right'}}><p style={{fontSize:38,fontWeight:700,fontFamily:T.serif,color:total>=240?T.g:total>=180?T.ac:T.w}}>{total}</p><p style={{fontSize:11,color:T.txS}}>/300</p></div>}
+      </div>
+      {ls&&<div style={{marginTop:12}}><ScoreBar label="Pull-ups" raw={`${latest.pullups} reps`} score={ls.p}/><ScoreBar label="Plank" raw={fmtSec(latest.plank_s)} score={ls.k}/><ScoreBar label="3-Mile Run" raw={fmtSec(latest.run_s)} score={ls.r}/></div>}
+    </Card>
+    <Btn onClick={()=>setShow(v=>!v)} full v="ghost">+ Log PFT</Btn>
+    {show&&<Card style={{padding:'16px'}}><div style={{display:'flex',flexDirection:'column',gap:12}}>
+      <Inp label="Date" type="date" value={form.date} onChange={e=>setForm({...form,date:e.target.value})}/>
+      <Inp label="Pull-ups" type="number" placeholder="e.g. 8" value={form.pullups} onChange={e=>setForm({...form,pullups:e.target.value})}/>
+      <div><label style={{display:'block',fontSize:11,fontWeight:700,textTransform:'uppercase',letterSpacing:'0.1em',color:T.txS,marginBottom:6}}>Plank (min:sec)</label><div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8}}><Inp placeholder="min" type="number" value={form.plank_m} onChange={e=>setForm({...form,plank_m:e.target.value})}/><Inp placeholder="sec" type="number" value={form.plank_s} onChange={e=>setForm({...form,plank_s:e.target.value})}/></div></div>
+      <div><label style={{display:'block',fontSize:11,fontWeight:700,textTransform:'uppercase',letterSpacing:'0.1em',color:T.txS,marginBottom:6}}>3-Mile Run (min:sec)</label><div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8}}><Inp placeholder="min" type="number" value={form.run_m} onChange={e=>setForm({...form,run_m:e.target.value})}/><Inp placeholder="sec" type="number" value={form.run_s} onChange={e=>setForm({...form,run_s:e.target.value})}/></div></div>
+      <Btn onClick={addEntry} full>Save</Btn>
+    </div></Card>}
+    {pft.length>1&&<div><SecLabel>History</SecLabel>
+      {pft.map((e,i)=>{const s=sPU(e.pullups)+sPL(e.plank_s)+sRN(e.run_s);const prev=pft[i+1];const delta=prev?s-(sPU(prev.pullups)+sPL(prev.plank_s)+sRN(prev.run_s)):null;return <div key={e.id} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'12px 0',borderBottom:`1px solid ${T.bgS}`}}>
+        <div><p style={{fontSize:11,fontWeight:600,color:T.txS}}>{e.date}</p><p style={{fontSize:13,color:T.tx,marginTop:2}}>{e.pullups} reps · {fmtSec(e.plank_s)} · {fmtSec(e.run_s)}</p></div>
+        <div style={{textAlign:'right'}}><p style={{fontSize:22,fontWeight:700,color:T.ac,fontFamily:T.serif}}>{s}</p>{delta!==null&&<p style={{fontSize:11,fontWeight:700,color:delta>=0?T.g:T.r}}>{delta>0?'+':''}{delta}</p>}</div>
+      </div>;})}
+    </div>}
+  </div>;
+}
+
+function CFTTab({state,save}){
+  const {cft,user}=state;const days=daysFrom('2026-10-15');
+  const [show,setShow]=useState(false);const [form,setForm]=useState({date:today(),mtc_m:'',mtc_s:'',acl:'',manuf_m:'',manuf_s:''});
+  function bracket(age){if(age<=25)return 0;if(age<=30)return 1;if(age<=35)return 2;if(age<=40)return 3;if(age<=45)return 4;if(age<=50)return 5;return 6;}
+  const b=bracket(user.age);
+  const CM=[[206,310],[211,320],[216,330],[221,340],[226,350],[231,360],[236,370]];
+  const CA=[[6,91],[6,85],[6,80],[6,75],[6,70],[6,65],[6,60]];
+  const CF=[[173,300],[178,310],[183,320],[188,330],[193,340],[198,350],[203,360]];
+  const sMTC=s=>{const[f,sl]=CM[b];if(s<=f)return 100;if(s>sl)return 0;return Math.round(40+((sl-s)/(sl-f))*60);};
+  const sACL=r=>{const[lo,hi]=CA[b];if(r<lo)return 0;if(r>=hi)return 100;return Math.round(40+((r-lo)/(hi-lo))*60);};
+  const sMANUF=s=>{const[f,sl]=CF[b];if(s<=f)return 100;if(s>sl)return 0;return Math.round(40+((sl-s)/(sl-f))*60);};
+  function add(){const d={id:uid(),date:form.date,mtc_s:Number(form.mtc_m)*60+Number(form.mtc_s),acl:Number(form.acl),manuf_s:Number(form.manuf_m)*60+Number(form.manuf_s)};save({...state,cft:[d,...state.cft]});setShow(false);}
+  const latest=cft[0];const ls=latest?{m:sMTC(latest.mtc_s),a:sACL(latest.acl),f:sMANUF(latest.manuf_s)}:null;const total=ls?ls.m+ls.a+ls.f:0;
+  return <div style={{display:'flex',flexDirection:'column',gap:16}}>
+    <Card style={{padding:'16px'}}>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start'}}>
+        <div><p style={{fontSize:11,fontWeight:700,color:T.txS,textTransform:'uppercase',letterSpacing:'0.1em',marginBottom:4}}>CFT · Jul–Dec · Female</p><p style={{fontSize:13,color:T.txM}}>{days}d to test · Oct 15</p></div>
+        {ls&&<div style={{textAlign:'right'}}><p style={{fontSize:38,fontWeight:700,fontFamily:T.serif,color:T.ac}}>{total}</p><p style={{fontSize:11,color:T.txS}}>/300</p></div>}
+      </div>
+      {ls&&<div style={{marginTop:12}}><ScoreBar label="Movement to Contact" raw={fmtSec(latest.mtc_s)} score={ls.m}/><ScoreBar label="Ammo Can Lifts" raw={`${latest.acl} reps`} score={ls.a}/><ScoreBar label="Maneuver Under Fire" raw={fmtSec(latest.manuf_s)} score={ls.f}/></div>}
+      {!ls&&<Empty icon="🏃" text="No CFT entries yet"/>}
+    </Card>
+    <Btn onClick={()=>setShow(v=>!v)} full v="ghost">+ Log CFT</Btn>
+    {show&&<Card style={{padding:'16px'}}><div style={{display:'flex',flexDirection:'column',gap:12}}>
+      <Inp label="Date" type="date" value={form.date} onChange={e=>setForm({...form,date:e.target.value})}/>
+      <div><label style={{display:'block',fontSize:11,fontWeight:700,textTransform:'uppercase',letterSpacing:'0.1em',color:T.txS,marginBottom:6}}>MTC (min:sec)</label><div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8}}><Inp placeholder="min" type="number" value={form.mtc_m} onChange={e=>setForm({...form,mtc_m:e.target.value})}/><Inp placeholder="sec" type="number" value={form.mtc_s} onChange={e=>setForm({...form,mtc_s:e.target.value})}/></div></div>
+      <Inp label="Ammo Can Lifts" type="number" value={form.acl} onChange={e=>setForm({...form,acl:e.target.value})}/>
+      <div><label style={{display:'block',fontSize:11,fontWeight:700,textTransform:'uppercase',letterSpacing:'0.1em',color:T.txS,marginBottom:6}}>MANUF (min:sec)</label><div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8}}><Inp placeholder="min" type="number" value={form.manuf_m} onChange={e=>setForm({...form,manuf_m:e.target.value})}/><Inp placeholder="sec" type="number" value={form.manuf_s} onChange={e=>setForm({...form,manuf_s:e.target.value})}/></div></div>
+      <Btn onClick={add} full>Save</Btn>
+    </div></Card>}
+  </div>;
+}
+
+/* ── BOOKS ───────────────────────────────────────────────── */
+function BooksView({state,setState}){
+  const {books,bookCategories}=state;
+  const [tab,setTab]=useState('to_read');
+  const [showAdd,setShowAdd]=useState(false);
+  const [form,setForm]=useState({title:'',author:'',categories:[],notes:''});
+  const [filter,setFilter]=useState(null);
+  const [editBook,setEditBook]=useState(null);
+  const [dragOver,setDragOver]=useState(null);
+  const dragItem=useRef(null);
+
+  function save(n){setState(n);saveState(n);}
+  function addBook(){
+    if(!form.title.trim())return;
+    const existing=books.filter(b=>b.status===tab);
+    const b={id:uid(),...form,title:form.title.trim(),status:tab,rating:null,order:existing.length};
+    save({...state,books:[...state.books,b]});setShowAdd(false);setForm({title:'',author:'',categories:[],notes:''});
+  }
+  function updateBook(id,fields){save({...state,books:state.books.map(b=>b.id===id?{...b,...fields}:b)});}
+  function delBook(id){save({...state,books:state.books.filter(b=>b.id!==id)});setEditBook(null);}
+  function toggleCat(c){setForm(f=>({...f,categories:f.categories.includes(c)?f.categories.filter(x=>x!==c):[...f.categories,c]}));}
+
+  const list=books.filter(b=>b.status===tab).sort((a,b)=>(a.order??0)-(b.order??0));
+  const filtered=filter?list.filter(b=>b.categories?.includes(filter)):list;
+
+  // Drag to reorder
+  function onDragStart(e,id){dragItem.current=id;e.dataTransfer.effectAllowed='move';}
+  function onDragOver(e,id){e.preventDefault();setDragOver(id);}
+  function onDrop(e,targetId){
+    e.preventDefault();setDragOver(null);
+    const fromId=dragItem.current;if(!fromId||fromId===targetId)return;
+    const statusBooks=books.filter(b=>b.status===tab).sort((a,b)=>(a.order??0)-(b.order??0));
+    const fromIdx=statusBooks.findIndex(b=>b.id===fromId);
+    const toIdx=statusBooks.findIndex(b=>b.id===targetId);
+    if(fromIdx<0||toIdx<0)return;
+    const reordered=[...statusBooks];const[moved]=reordered.splice(fromIdx,1);reordered.splice(toIdx,0,moved);
+    const updatedOrders=reordered.map((b,i)=>({...b,order:i}));
+    const otherBooks=books.filter(b=>b.status!==tab);
+    save({...state,books:[...otherBooks,...updatedOrders]});
+  }
+
+  return <div style={{display:'flex',flexDirection:'column',gap:16}} className="slide-up">
+    <PageTitle>Books</PageTitle>
+    <TabBar tabs={[['to_read',`To Read (${books.filter(b=>b.status==='to_read').length})`],['read',`Read (${books.filter(b=>b.status==='read').length})`]]} active={tab} onChange={k=>{setTab(k);setFilter(null);}}/>
+    <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
+      <Pill label="All" active={!filter} onClick={()=>setFilter(null)}/>
+      {bookCategories.map(c=><Pill key={c} label={c} count={list.filter(b=>b.categories?.includes(c)).length} active={filter===c} onClick={()=>setFilter(filter===c?null:c)}/>)}
+    </div>
+    <Btn onClick={()=>setShowAdd(v=>!v)} full v="ghost">+ Add Book</Btn>
+    {showAdd&&<Card style={{padding:'16px'}}><div style={{display:'flex',flexDirection:'column',gap:12}}>
+      <Inp label="Title" value={form.title} onChange={e=>setForm({...form,title:e.target.value})}/>
+      <Inp label="Author" value={form.author} onChange={e=>setForm({...form,author:e.target.value})}/>
+      <div>
+        <label style={{display:'block',fontSize:11,fontWeight:700,textTransform:'uppercase',letterSpacing:'0.1em',color:T.txS,marginBottom:8}}>Tags</label>
+        <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>{bookCategories.map(c=><Pill key={c} label={c} active={form.categories.includes(c)} onClick={()=>toggleCat(c)}/>)}</div>
+      </div>
+      <Btn onClick={addBook} full>Save</Btn>
+    </div></Card>}
+    {tab==='to_read'&&filtered.length>1&&<p style={{fontSize:11,color:T.txS,textAlign:'center'}}>✦ Drag to reorder priority</p>}
+    <div style={{display:'flex',flexDirection:'column',gap:8}}>
+      {filtered.length===0&&<Empty icon="📚" text={tab==='to_read'?'Reading list is empty':'No books read yet'}/>}
+      {filtered.map((b,i)=>{
+        const isDragOver=dragOver===b.id;
+        return <Card key={b.id}
+          draggable={tab==='to_read'}
+          onDragStart={e=>onDragStart(e,b.id)}
+          onDragOver={e=>onDragOver(e,b.id)}
+          onDrop={e=>onDrop(e,b.id)}
+          onDragLeave={()=>setDragOver(null)}
+          style={{padding:'14px',opacity:isDragOver?.6:1,border:isDragOver?`2px dashed ${T.ac}`:'2px solid transparent',transition:'all .15s'}}>
+          <div style={{display:'flex',alignItems:'flex-start',gap:12}}>
+            {tab==='to_read'&&<div style={{flexShrink:0,cursor:'grab',color:T.txS,paddingTop:3,fontSize:16}}>⠿</div>}
+            <div style={{flex:1,minWidth:0}} onClick={()=>setEditBook(b)}>
+              <input defaultValue={b.title} onBlur={e=>updateBook(b.id,{title:e.target.value})} onKeyDown={e=>e.key==='Enter'&&e.target.blur()}
+                style={{fontSize:15,fontWeight:700,color:T.tx,background:'transparent',border:'none',outline:'none',width:'100%',fontFamily:'inherit'}}/>
+              {b.author&&<p style={{fontSize:13,color:T.txM,marginTop:2}}>{b.author}</p>}
+              {b.categories?.length>0&&<div style={{display:'flex',gap:4,marginTop:6,flexWrap:'wrap'}}>{b.categories.map(c=><Chip key={c} label={c}/>)}</div>}
+              {tab==='read'&&<Stars rating={b.rating} onRate={r=>updateBook(b.id,{rating:r})}/>}
+            </div>
+            <IconBtn onClick={()=>delBook(b.id)} danger><TrashIcon/></IconBtn>
+          </div>
+        </Card>;
+      })}
+    </div>
+    {editBook&&<Sheet onClose={()=>setEditBook(null)}>
+      <div style={{display:'flex',flexDirection:'column',gap:14}}>
+        <p style={{fontSize:16,fontWeight:700,color:T.tx}}>Edit Book</p>
+        <Inp label="Title" value={editBook.title} onChange={e=>{const v=e.target.value;setEditBook(s=>({...s,title:v}));updateBook(editBook.id,{title:v});}}/>
+        <Inp label="Author" value={editBook.author||''} onChange={e=>{const v=e.target.value;setEditBook(s=>({...s,author:v}));updateBook(editBook.id,{author:v});}}/>
+        {editBook.status==='read'&&<div><SecLabel>Rating</SecLabel><Stars rating={editBook.rating} onRate={r=>{setEditBook(s=>({...s,rating:r}));updateBook(editBook.id,{rating:r});}}/></div>}
+        <Btn v="danger" onClick={()=>delBook(editBook.id)}>Delete Book</Btn>
+      </div>
+    </Sheet>}
+  </div>;
+}
+
+/* ── CALENDAR ────────────────────────────────────────────── */
+function CalendarView(){
+  const now=new Date();
+  const [year,setYear]=useState(now.getFullYear());
+  const [month,setMonth]=useState(now.getMonth());
+  const first=new Date(year,month,1);
+  const daysInMonth=new Date(year,month+1,0).getDate();
+  const startDay=(first.getDay()+6)%7;// Mon start
+  const todayD=now.getDate(),todayM=now.getMonth(),todayY=now.getFullYear();
+  const monthName=new Date(year,month).toLocaleDateString('en-US',{month:'long',year:'numeric'});
+  return <div className="slide-up">
+    <PageTitle>Calendar</PageTitle>
+    <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:20}}>
+      <button onClick={()=>{if(month===0){setMonth(11);setYear(y=>y-1);}else setMonth(m=>m-1);}} style={{background:T.bgS,border:'none',borderRadius:10,width:36,height:36,cursor:'pointer',fontSize:18,display:'flex',alignItems:'center',justifyContent:'center'}}>‹</button>
+      <p style={{fontSize:16,fontWeight:700,color:T.tx}}>{monthName}</p>
+      <button onClick={()=>{if(month===11){setMonth(0);setYear(y=>y+1);}else setMonth(m=>m+1);}} style={{background:T.bgS,border:'none',borderRadius:10,width:36,height:36,cursor:'pointer',fontSize:18,display:'flex',alignItems:'center',justifyContent:'center'}}>›</button>
+    </div>
+    <div style={{display:'grid',gridTemplateColumns:'repeat(7,1fr)',gap:4,marginBottom:8}}>
+      {['M','T','W','T','F','S','S'].map((d,i)=><div key={i} style={{textAlign:'center',fontSize:11,fontWeight:700,color:T.txS,padding:'4px 0'}}>{d}</div>)}
+    </div>
+    <div style={{display:'grid',gridTemplateColumns:'repeat(7,1fr)',gap:4}}>
+      {Array(startDay).fill(null).map((_,i)=><div key={`e${i}`}/>)}
+      {Array(daysInMonth).fill(null).map((_,i)=>{
+        const d=i+1;const isToday=d===todayD&&month===todayM&&year===todayY;
+        return <div key={d} style={{aspectRatio:'1',display:'flex',alignItems:'center',justifyContent:'center',borderRadius:10,background:isToday?T.ac:T.card,fontSize:14,fontWeight:isToday?700:400,color:isToday?'#fff':T.tx,boxShadow:isToday?'none':'0 1px 3px rgba(0,0,0,0.04)'}}>
+          {d}
+        </div>;
+      })}
+    </div>
+    <div style={{marginTop:24,textAlign:'center'}}>
+      <p style={{fontSize:13,color:T.txS}}>Calendar sync coming soon</p>
+      <p style={{fontSize:12,color:T.txS,marginTop:4}}>Connect Google or Apple Calendar</p>
+      <div style={{marginTop:16,display:'flex',flexDirection:'column',gap:8}}>
+        <Btn full v="ghost">Connect Google Calendar</Btn>
+        <Btn full v="soft">Connect Apple Calendar</Btn>
+      </div>
+    </div>
+  </div>;
+}
+
+/* ── NAVIGATION ──────────────────────────────────────────── */
+const NAV=[
+  {id:'today',label:'Today',icon:'⊙'},
+  {id:'tasks',label:'Tasks',icon:'✓'},
+  {id:'projects',label:'Projects',icon:'◫'},
+  {id:'trips',label:'Trips',icon:'✈'},
+  {id:'clothing',label:'Clothing',icon:'◈'},
+  {id:'fitness',label:'Fitness',icon:'◉'},
+  {id:'books',label:'Books',icon:'▤'},
+];
+
+/* ── APP ROOT ─────────────────────────────────────────────── */
+function App(){
+  const [state,setState]=useState(()=>loadState());
+  const [view,setView]=useState('today');
+  const [moreOpen,setMoreOpen]=useState(false);
+
+  const mainNav=NAV.slice(0,5);
+  const moreNav=NAV.slice(5);
+  const activeInMore=moreNav.some(n=>n.id===view);
+
+  function renderView(){
+    switch(view){
+      case 'today': return <TodayView state={state} go={v=>{setView(v);setMoreOpen(false);}}/>;
+      case 'tasks': return <TasksView state={state} setState={setState}/>;
+      case 'projects': return <ProjectsView state={state} setState={setState}/>;
+      case 'trips': return <TripsView state={state} setState={setState}/>;
+      case 'clothing': return <ClothingView state={state} setState={setState}/>;
+      case 'fitness': return <FitnessView state={state} setState={setState}/>;
+      case 'books': return <BooksView state={state} setState={setState}/>;
+      case 'calendar': return <CalendarView/>;
+      default: return null;
+    }
+  }
+
+  return <div style={{display:'flex',flexDirection:'column',height:'100%',background:T.bg,maxWidth:430,margin:'0 auto',position:'relative',overflow:'hidden'}}>
+    {/* Content */}
+    <div style={{flex:1,overflowY:'auto',padding:'0 20px 100px',paddingTop:'calc(16px + env(safe-area-inset-top,0px))'}}>
+      {renderView()}
+    </div>
+
+    {/* Bottom nav */}
+    <div style={{position:'absolute',bottom:0,left:0,right:0,background:T.card,borderTop:`1px solid ${T.border}`,paddingBottom:'env(safe-area-inset-bottom,0px)',backdropFilter:'blur(20px)',WebkitBackdropFilter:'blur(20px)'}}>
+      <div style={{display:'flex'}}>
+        {mainNav.map(n=>{const active=view===n.id;return <button key={n.id} onClick={()=>{setView(n.id);setMoreOpen(false);}} style={{flex:1,display:'flex',flexDirection:'column',alignItems:'center',padding:'10px 0 8px',gap:3,background:'none',border:'none',cursor:'pointer',position:'relative'}}>
+          {active&&<div style={{position:'absolute',top:0,left:'50%',transform:'translateX(-50%)',width:20,height:3,borderRadius:99,background:T.ac}}/>}
+          <span style={{fontSize:16,lineHeight:1,color:active?T.ac:T.txS}}>{n.icon}</span>
+          <span style={{fontSize:10,fontWeight:700,color:active?T.ac:T.txS,letterSpacing:'0.01em'}}>{n.label}</span>
+        </button>;})}
+        <button onClick={()=>setMoreOpen(v=>!v)} style={{flex:1,display:'flex',flexDirection:'column',alignItems:'center',padding:'10px 0 8px',gap:3,background:'none',border:'none',cursor:'pointer',position:'relative'}}>
+          {activeInMore&&<div style={{position:'absolute',top:0,left:'50%',transform:'translateX(-50%)',width:20,height:3,borderRadius:99,background:T.ac}}/>}
+          <span style={{fontSize:16,lineHeight:1,color:activeInMore?T.ac:T.txS}}>···</span>
+          <span style={{fontSize:10,fontWeight:700,color:activeInMore?T.ac:T.txS}}>More</span>
+        </button>
+      </div>
+    </div>
+
+    {/* More sheet */}
+    {moreOpen&&<div onClick={()=>setMoreOpen(false)} style={{position:'absolute',inset:0,zIndex:100,background:'rgba(0,0,0,0.4)'}}>
+      <div onClick={e=>e.stopPropagation()} style={{position:'absolute',bottom:0,left:0,right:0,background:T.card,borderRadius:'24px 24px 0 0',padding:'20px 20px 40px',paddingBottom:'calc(40px + env(safe-area-inset-bottom,0px))'}}>
+        <div style={{width:36,height:4,borderRadius:99,background:T.border,margin:'0 auto 20px'}}/>
+        {[...moreNav,{id:'calendar',label:'Calendar',icon:'◻'}].map(n=>{const active=view===n.id;return <button key={n.id} onClick={()=>{setView(n.id);setMoreOpen(false);}} style={{width:'100%',display:'flex',alignItems:'center',gap:16,padding:'14px 16px',borderRadius:14,border:'none',cursor:'pointer',background:active?T.acS:'transparent',marginBottom:4}}>
+          <span style={{fontSize:22,width:28,textAlign:'center',color:active?T.ac:T.txM}}>{n.icon}</span>
+          <span style={{fontSize:16,fontWeight:600,color:active?T.ac:T.tx}}>{n.label}</span>
+        </button>;})}
+      </div>
+    </div>}
+  </div>;
+}
+
+const root=ReactDOM.createRoot(document.getElementById('root'));
+root.render(<App/>);
+</script>
+</body>
+</html>
