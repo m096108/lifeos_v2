@@ -4,8 +4,8 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
 <title>LifeOS</title>
-<link rel="icon" type="image/png" href="public/favicon.png" />
-<link rel="apple-touch-icon" href="public/apple-touch-icon.png" />
+<link rel="icon" type="image/png" href="favicon.png" />
+<link rel="apple-touch-icon" href="apple-touch-icon.png" />
 <link rel="manifest" href="manifest.json" />
 <meta name="theme-color" content="#FFC107" />
 <meta name="apple-mobile-web-app-capable" content="yes" />
@@ -18,7 +18,9 @@
 <script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
-html,body{height:100%;background:#111;font-family:'Inter',sans-serif;-webkit-font-smoothing:antialiased}
+html,body{height:100%;background:#F7F6F3;font-family:'Inter',sans-serif;-webkit-font-smoothing:antialiased;overscroll-behavior:none}
+body{overflow:hidden}
+#root{height:100%}
 ::-webkit-scrollbar{width:3px}::-webkit-scrollbar-track{background:transparent}::-webkit-scrollbar-thumb{background:#ddd;border-radius:3px}
 input,select,textarea,button{font-family:'Inter',sans-serif;font-size:16px}
 @keyframes slideUp{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}}
