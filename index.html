@@ -4,14 +4,15 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
 <title>LifeOS</title>
-<link rel="icon" type="image/png" href="favicon.png?v=5" />
-<link rel="apple-touch-icon" href="apple-touch-icon.png?v=5" />
-<link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon-180x180.png?v=5" />
-<link rel="apple-touch-icon" sizes="167x167" href="apple-touch-icon-167x167.png?v=5" />
-<link rel="apple-touch-icon" sizes="152x152" href="apple-touch-icon-152x152.png?v=5" />
-<link rel="apple-touch-icon" sizes="120x120" href="apple-touch-icon-120x120.png?v=5" />
-<link rel="apple-touch-icon-precomposed" href="apple-touch-icon-precomposed.png?v=5" />
-<link rel="manifest" href="manifest.json?v=5" />
+<link rel="icon" type="image/png" href="favicon.png?v=6" />
+<link rel="apple-touch-icon" href="apple-touch-icon.png?v=6" />
+<link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon-180x180.png?v=6" />
+<link rel="apple-touch-icon" sizes="167x167" href="apple-touch-icon-167x167.png?v=6" />
+<link rel="apple-touch-icon" sizes="152x152" href="apple-touch-icon-152x152.png?v=6" />
+<link rel="apple-touch-icon" sizes="120x120" href="apple-touch-icon-120x120.png?v=6" />
+<link rel="apple-touch-icon-precomposed" href="apple-touch-icon-precomposed.png?v=6" />
+<!-- Manifest disabled for iOS — it confuses Add to Home Screen. Add back for Android PWA install. -->
+<!-- <link rel="manifest" href="manifest.json?v=5" /> -->
 <meta name="theme-color" content="#FFC107" />
 <meta name="apple-mobile-web-app-capable" content="yes" />
 <meta name="apple-mobile-web-app-status-bar-style" content="default" />
@@ -247,7 +248,7 @@ function Inp({label,area,...props}){
   return <div style={{minWidth:0}}>{label&&<label style={{display:'block',fontSize:11,fontWeight:700,textTransform:'uppercase',letterSpacing:'0.1em',color:T.txS,marginBottom:6}}>{label}</label>}{area?<textarea {...props} style={style} onFocus={e=>{setFocus(true);props.onFocus?.(e)}} onBlur={e=>{setFocus(false);props.onBlur?.(e)}} />:<input {...props} style={style} onFocus={e=>{setFocus(true);props.onFocus?.(e)}} onBlur={e=>{setFocus(false);props.onBlur?.(e)}} />}</div>;
 }
 function Sel({label,children,...props}){
-  return <div>{label&&<label style={{display:'block',fontSize:11,fontWeight:700,textTransform:'uppercase',letterSpacing:'0.1em',color:T.txS,marginBottom:6}}>{label}</label>}<select {...props} style={{width:'100%',boxSizing:'border-box',background:T.bgS,border:'2px solid transparent',borderRadius:12,padding:'11px 14px',fontSize:15,color:T.tx,outline:'none',fontFamily:'inherit'}}>{children}</select></div>;
+  return <div style={{minWidth:0}}>{label&&<label style={{display:'block',fontSize:11,fontWeight:700,textTransform:'uppercase',letterSpacing:'0.1em',color:T.txS,marginBottom:6}}>{label}</label>}<select {...props} style={{width:'100%',minWidth:0,boxSizing:'border-box',background:T.bgS,border:'2px solid transparent',borderRadius:12,padding:'11px 14px',fontSize:15,color:T.tx,outline:'none',fontFamily:'inherit',WebkitAppearance:'none',appearance:'none'}}>{children}</select></div>;
 }
 function Chip({label}){const s=chipStyle(label);return <span style={{fontSize:11,fontWeight:700,padding:'3px 9px',borderRadius:8,background:s.bg,color:s.c,textTransform:'capitalize',display:'inline-block'}}>{label}</span>;}
 function Pill({label,active,onClick,dashed,count}){
@@ -642,12 +643,12 @@ function TasksView({state,setState}){
       <button onClick={()=>setShowOpts(v=>!v)} style={{marginTop:10,fontSize:12,fontWeight:600,color:T.txS,background:'none',border:'none',cursor:'pointer',fontFamily:'inherit'}}>
         {showOpts?'▲ Fewer options':'▼ More options'}
       </button>
-      {showOpts&&<div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:8,marginTop:10}}>
+      {showOpts&&<div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginTop:10}}>
         <Sel value={context} onChange={e=>setContext(e.target.value)}>{categories.map(c=><option key={c} value={c}>{c}</option>)}</Sel>
         <Sel value={priority} onChange={e=>setPriority(Number(e.target.value))}>
           <option value={1}>🔴 Critical</option><option value={2}>🟡 Normal</option><option value={3}>⚪ Low</option>
         </Sel>
-        <input type="date" value={due} onChange={e=>setDue(e.target.value)} style={{background:T.bgS,border:'none',borderRadius:12,padding:'10px 10px',fontSize:13,color:T.tx,outline:'none',fontFamily:'inherit',boxSizing:'border-box'}}/>
+        <input type="date" value={due} onChange={e=>setDue(e.target.value)} style={{gridColumn:'1 / -1',minWidth:0,width:'100%',boxSizing:'border-box',background:T.bgS,border:'none',borderRadius:12,padding:'8px 10px',fontSize:13,fontWeight:600,color:T.tx,outline:'none',fontFamily:'inherit',WebkitAppearance:'none',appearance:'none',display:'block'}}/>
       </div>}
     </Card>
 
@@ -787,10 +788,10 @@ function ProjectsView({state,setState}){
           <input value={taskIn} onChange={e=>setTaskIn(e.target.value)} onKeyDown={e=>e.key==='Enter'&&addTask()} placeholder="Add task…"
             style={{background:T.bgS,border:`2px solid ${T.border}`,borderRadius:12,padding:'10px 14px',fontSize:15,color:T.tx,outline:'none',fontFamily:'inherit',width:'100%',boxSizing:'border-box'}}/>
           <div style={{display:'flex',gap:8}}>
-            <Sel value={taskP} onChange={e=>setTaskP(Number(e.target.value))} style={{flex:1}}>
+            <Sel value={taskP} onChange={e=>setTaskP(Number(e.target.value))} style={{flex:1,minWidth:0}}>
               <option value={1}>🔴 Critical</option><option value={2}>🟡 Normal</option><option value={3}>⚪ Low</option>
             </Sel>
-            <input type="date" value={taskDue} onChange={e=>setTaskDue(e.target.value)} style={{flex:1,background:T.bgS,border:'none',borderRadius:12,padding:'10px 10px',fontSize:13,color:T.tx,outline:'none',fontFamily:'inherit'}}/>
+            <input type="date" value={taskDue} onChange={e=>setTaskDue(e.target.value)} style={{flex:1,minWidth:0,background:T.bgS,border:'none',borderRadius:12,padding:'8px 10px',fontSize:13,fontWeight:600,color:T.tx,outline:'none',fontFamily:'inherit',WebkitAppearance:'none',appearance:'none'}}/>
             <Btn onClick={addTask} size="sm">Add</Btn>
           </div>
         </div>
@@ -2082,7 +2083,7 @@ function App(){
 
   return <div style={{display:'flex',flexDirection:'column',height:'100%',background:T.bg,maxWidth:430,margin:'0 auto',position:'relative',overflow:'hidden'}}>
     {/* Content */}
-    <div style={{flex:1,overflowY:'auto',padding:'0 20px 100px',paddingTop:'calc(16px + env(safe-area-inset-top,0px))'}}>
+    <div style={{flex:1,overflowY:'auto',overflowX:'hidden',padding:'0 20px 100px',paddingTop:'calc(16px + env(safe-area-inset-top,0px))'}}>
       {renderView()}
     </div>
 
