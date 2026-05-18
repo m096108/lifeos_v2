@@ -40,6 +40,17 @@ create table if not exists task_contexts (
   unique (user_id, name)
 );
 
+-- Projects (must come before tasks since tasks references it)
+create table if not exists projects (
+  id             uuid primary key default gen_random_uuid(),
+  user_id        uuid not null references auth.users on delete cascade,
+  title          text not null,
+  notes          text default '',
+  status         text default 'active',
+  updated_at     date default current_date,
+  created_at     timestamptz default now()
+);
+
 -- Tasks (standalone OR attached to a project)
 create table if not exists tasks (
   id             uuid primary key default gen_random_uuid(),
@@ -56,17 +67,6 @@ create table if not exists tasks (
   created_at     timestamptz default now()
 );
 
-create table if not exists projects (
-  id             uuid primary key default gen_random_uuid(),
-  user_id        uuid not null references auth.users on delete cascade,
-  title          text not null,
-  notes          text default '',
-  status         text default 'active',
-  updated_at     date default current_date,
-  created_at     timestamptz default now()
-);
-
--- Trips
 create table if not exists trips (
   id             uuid primary key default gen_random_uuid(),
   user_id        uuid not null references auth.users on delete cascade,

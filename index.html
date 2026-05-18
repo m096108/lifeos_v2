@@ -19,6 +19,14 @@
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet" />
 <script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.0/dist/umd/supabase.js"></script>
+<script>
+  window.SUPABASE_URL = 'https://eecvqmqvohndiinwxjlx.supabase.co';
+  window.SUPABASE_KEY = 'sb_publishable_-xlj2TxwTlABO0z9aoTedg_AuJAAU8k';
+  window.sb = window.supabase.createClient(window.SUPABASE_URL, window.SUPABASE_KEY, {
+    auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true, flowType: 'pkce' }
+  });
+</script>
 <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
 <script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
 <style>
@@ -204,8 +212,24 @@ const SEED={
   ],
   bookCategories:['fiction','non-fiction','self-help','biography'],
 };
-function loadState(){try{const r=localStorage.getItem('lifeos_v5');if(r){const p=JSON.parse(r);if(!p.user)p.user={age:22};p.user={age:22,sex:'female',abEvent:'plank',name:'',last_brief:null,last_close:null,...p.user};if(!p.inspoCategories)p.inspoCategories=['casual','workwear','evening','vacation'];if(!p.tags)p.tags=[];if(!p.reference)p.reference=[];p.inspo=(p.inspo||[]).map(i=>({categories:[],trip_id:null,tags:[],...i}));p.trips=(p.trips||[]).map(t=>({activity_ideas:t.notes||'',outfit_ideas:'',tag_id:null,...t}));p.tasks=(p.tasks||[]).map(t=>({recurrence:null,...t}));p.checklist=(p.checklist||[]).map(c=>({kind:'packing',...c}));return p;}}catch(e){}return JSON.parse(JSON.stringify(SEED));}
-function saveState(s){try{localStorage.setItem('lifeos_v5',JSON.stringify(s));}catch(e){}}
+function hydrate(p){if(!p.user)p.user={age:22};p.user={age:22,sex:'female',abEvent:'plank',name:'',last_brief:null,last_close:null,...p.user};if(!p.inspoCategories)p.inspoCategories=['casual','workwear','evening','vacation'];if(!p.tags)p.tags=[];if(!p.reference)p.reference=[];p.inspo=(p.inspo||[]).map(i=>({categories:[],trip_id:null,tags:[],...i}));p.trips=(p.trips||[]).map(t=>({activity_ideas:t.notes||'',outfit_ideas:'',tag_id:null,...t}));p.tasks=(p.tasks||[]).map(t=>({recurrence:null,...t}));p.checklist=(p.checklist||[]).map(c=>({kind:'packing',...c}));return p;}
+function loadState(){try{const r=localStorage.getItem('lifeos_v5');if(r)return hydrate(JSON.parse(r));}catch(e){}return JSON.parse(JSON.stringify(SEED));}
+let _syncTimer=null,_syncing=false;
+window.__syncStatus={ts:0,err:null};
+function saveState(s){
+  try{localStorage.setItem('lifeos_v5',JSON.stringify(s));}catch(e){}
+  if(!window._userId)return;
+  clearTimeout(_syncTimer);
+  _syncTimer=setTimeout(async()=>{
+    _syncing=true;
+    window.dispatchEvent(new Event('sync-status'));
+    const {error}=await window.sb.from('user_state').upsert({user_id:window._userId,state:s,updated_at:new Date().toISOString()});
+    _syncing=false;
+    window.__syncStatus={ts:Date.now(),err:error?.message||null};
+    window.dispatchEvent(new Event('sync-status'));
+    if(error)console.error('Sync error:',error);
+  },800);
+}
 
 /* ── UI PRIMITIVES ───────────────────────────────────────── */
 function Card({children,onClick,style={},accent}){
@@ -1778,8 +1802,32 @@ function SearchPalette({state,onGo,onClose,onAddTask}){
 }
 
 /* ── SETTINGS ────────────────────────────────────────────── */
-function SettingsView({state,setState}){
+function SettingsView({state,setState,session}){
   function save(n){setState(n);saveState(n);}
+  const [syncTick,setSyncTick]=useState(0);
+  useEffect(()=>{
+    function onSync(){setSyncTick(t=>t+1);}
+    window.addEventListener('sync-status',onSync);
+    return()=>window.removeEventListener('sync-status',onSync);
+  },[]);
+  async function signOut(){
+    if(!window.confirm('Sign out? Your local data will be cleared. (It stays safe in the cloud — sign back in to restore.)'))return;
+    await window.sb.auth.signOut();
+    try{localStorage.removeItem('lifeos_v5');}catch(e){}
+    window.location.reload();
+  }
+  const lastSync=window.__syncStatus?.ts;
+  const syncErr=window.__syncStatus?.err;
+  function fmtSync(){
+    if(!lastSync)return 'Saved locally';
+    const s=Math.floor((Date.now()-lastSync)/1000);
+    if(s<5)return 'Synced just now';
+    if(s<60)return `Synced ${s}s ago`;
+    const m=Math.floor(s/60);
+    if(m<60)return `Synced ${m}m ago`;
+    const h=Math.floor(m/60);
+    return `Synced ${h}h ago`;
+  }
   function exportData(){
     const data=JSON.stringify(state,null,2);
     const blob=new Blob([data],{type:'application/json'});
@@ -1849,25 +1897,14 @@ function SettingsView({state,setState}){
     <SecLabel>CLOUD SYNC</SecLabel>
     <Card style={{padding:'16px'}}>
       <div style={{display:'flex',alignItems:'flex-start',gap:12}}>
-        <div style={{width:36,height:36,borderRadius:10,background:T.bgS,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0,fontSize:18}}>☁</div>
-        <div style={{flex:1}}>
-          <p style={{fontSize:14,fontWeight:700,color:T.tx}}>Not connected · local only</p>
-          <p style={{fontSize:12,color:T.txM,marginTop:4,lineHeight:1.5}}>Your data lives in this device's browser. To use LifeOS on phone + web, connect a Supabase project. The schema is in <strong style={{color:T.tx,fontWeight:700}}>/docs/supabase.sql</strong>.</p>
+        <div style={{width:36,height:36,borderRadius:10,background:syncErr?T.rS:T.gS,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0,fontSize:18,color:syncErr?T.r:T.g}}>{syncErr?'!':'✓'}</div>
+        <div style={{flex:1,minWidth:0}}>
+          <p style={{fontSize:14,fontWeight:700,color:T.tx,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{session?.user?.email||'Signed in'}</p>
+          <p style={{fontSize:12,color:syncErr?T.r:T.txM,marginTop:4,lineHeight:1.5}}>{syncErr?`Sync error: ${syncErr}`:fmtSync()}</p>
         </div>
       </div>
-      <div style={{marginTop:12,padding:'10px 12px',background:T.bgS,borderRadius:10}}>
-        <p style={{fontSize:11,fontWeight:700,color:T.txS,textTransform:'uppercase',letterSpacing:'0.08em',marginBottom:6}}>Setup</p>
-        <ol style={{fontSize:12,color:T.txM,paddingLeft:18,lineHeight:1.7,margin:0}}>
-          <li>Create a new Supabase project</li>
-          <li>Run <code style={{background:T.card,padding:'1px 5px',borderRadius:4,fontSize:11}}>docs/supabase.sql</code> in the SQL editor</li>
-          <li>Paste your URL + anon key below</li>
-          <li>Enable Row-Level Security policies (in schema)</li>
-        </ol>
-      </div>
-      <div style={{display:'flex',flexDirection:'column',gap:8,marginTop:12}}>
-        <Inp label="Supabase URL" placeholder="https://xxxxx.supabase.co" disabled/>
-        <Inp label="Anon key" placeholder="eyJ…" disabled/>
-        <Btn full disabled>Connect (coming soon)</Btn>
+      <div style={{marginTop:14,display:'flex',flexDirection:'column',gap:8}}>
+        <Btn full v="soft" onClick={signOut}>Sign out</Btn>
       </div>
     </Card>
 
@@ -1906,12 +1943,98 @@ const NAV=[
   {id:'reference',label:'Reference',icon:<ReferenceIcon/>},
 ];
 
+/* ── AUTH ───────────────────────────────────────────────── */
+function AuthGate(){
+  const [email,setEmail]=useState('');
+  const [sent,setSent]=useState(false);
+  const [loading,setLoading]=useState(false);
+  const [err,setErr]=useState(null);
+
+  async function send(e){
+    e?.preventDefault();
+    if(!email.trim())return;
+    setLoading(true);setErr(null);
+    const redir=window.location.origin+window.location.pathname;
+    const {error}=await window.sb.auth.signInWithOtp({email:email.trim(),options:{emailRedirectTo:redir}});
+    setLoading(false);
+    if(error)setErr(error.message);
+    else setSent(true);
+  }
+
+  return <div style={{height:'100%',display:'flex',flexDirection:'column',justifyContent:'center',padding:'24px',maxWidth:380,margin:'0 auto'}}>
+    <div style={{textAlign:'center',marginBottom:36}}>
+      <div style={{width:72,height:72,borderRadius:18,background:'#FFC107',margin:'0 auto 18px',display:'flex',alignItems:'center',justifyContent:'center',fontSize:36,fontWeight:800,fontFamily:T.serif,color:T.tx,boxShadow:'0 8px 24px rgba(255,193,7,0.35)'}}>B</div>
+      <h1 style={{fontSize:30,fontFamily:T.serif,color:T.tx,marginBottom:6}}>LifeOS</h1>
+      <p style={{fontSize:14,color:T.txM}}>Sign in to sync across your devices</p>
+    </div>
+
+    {sent?
+      <div style={{textAlign:'center',padding:'24px 16px',background:T.card,borderRadius:16,boxShadow:'0 1px 3px rgba(0,0,0,0.05),0 6px 20px rgba(0,0,0,0.04)'}}>
+        <div style={{fontSize:28,marginBottom:10}}>✉</div>
+        <p style={{fontSize:15,fontWeight:700,color:T.tx,marginBottom:6}}>Check your email</p>
+        <p style={{fontSize:13,color:T.txM,lineHeight:1.5}}>We sent a magic link to<br/><strong style={{color:T.tx}}>{email}</strong></p>
+        <p style={{fontSize:11,color:T.txS,marginTop:14}}>Tap the link in the email. This window will sign in automatically.</p>
+        <button onClick={()=>{setSent(false);setEmail('');}} style={{marginTop:18,background:'none',border:'none',color:T.ac,fontSize:13,fontWeight:600,cursor:'pointer',fontFamily:'inherit'}}>Use a different email</button>
+      </div>
+    :
+      <form onSubmit={send} style={{display:'flex',flexDirection:'column',gap:12}}>
+        <Inp label="Email" type="email" autoComplete="email" placeholder="you@example.com" value={email} onChange={e=>setEmail(e.target.value)} required/>
+        {err&&<p style={{fontSize:12,color:T.r,padding:'8px 12px',background:T.rS,borderRadius:10}}>{err}</p>}
+        <Btn onClick={send} full disabled={loading||!email.trim()}>{loading?'Sending…':'Send magic link'}</Btn>
+        <p style={{fontSize:11,color:T.txS,textAlign:'center',lineHeight:1.5,marginTop:4}}>No password. We'll email you a link.</p>
+      </form>
+    }
+  </div>;
+}
+
+function LoadingScreen({text}){
+  return <div style={{height:'100%',display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',gap:14,color:T.txM}}>
+    <div style={{width:36,height:36,borderRadius:'50%',border:`3px solid ${T.bgS}`,borderTopColor:T.ac,animation:'spin 0.9s linear infinite'}}/>
+    <p style={{fontSize:13}}>{text||'Loading…'}</p>
+    <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
+  </div>;
+}
+
 /* ── APP ROOT ─────────────────────────────────────────────── */
 function App(){
-  const [state,setState]=useState(()=>loadState());
+  const [session,setSession]=useState(undefined); // undefined=checking, null=no, obj=signed-in
+  const [state,setState]=useState(null);
   const [view,setView]=useState('today');
   const [moreOpen,setMoreOpen]=useState(false);
   const [searchOpen,setSearchOpen]=useState(false);
+  const [loadErr,setLoadErr]=useState(null);
+
+  // Track auth session
+  useEffect(()=>{
+    window.sb.auth.getSession().then(({data})=>setSession(data.session||null));
+    const {data:sub}=window.sb.auth.onAuthStateChange((_e,s)=>setSession(s||null));
+    return()=>sub.subscription.unsubscribe();
+  },[]);
+
+  // Load remote state when session arrives
+  useEffect(()=>{
+    if(!session){window._userId=null;setState(null);return;}
+    window._userId=session.user.id;
+    let cancelled=false;
+    (async()=>{
+      setLoadErr(null);
+      const {data,error}=await window.sb.from('user_state').select('state').eq('user_id',session.user.id).maybeSingle();
+      if(cancelled)return;
+      if(error){setLoadErr(error.message);console.error('Load error:',error);return;}
+      if(data?.state&&Object.keys(data.state).length>0){
+        const hydrated=hydrate(data.state);
+        setState(hydrated);
+        try{localStorage.setItem('lifeos_v5',JSON.stringify(hydrated));}catch(e){}
+      } else {
+        // First sign-in for this user: bootstrap from local cache (or seed)
+        const local=loadState();
+        setState(local);
+        const {error:upErr}=await window.sb.from('user_state').upsert({user_id:session.user.id,state:local,updated_at:new Date().toISOString()});
+        if(upErr)console.error('Initial upsert error:',upErr);
+      }
+    })();
+    return()=>{cancelled=true;};
+  },[session?.user?.id]);
 
   // Cmd/Ctrl+K to open search on desktop
   useEffect(()=>{
@@ -1921,6 +2044,15 @@ function App(){
     window.addEventListener('keydown',onKey);
     return ()=>window.removeEventListener('keydown',onKey);
   },[]);
+
+  if(session===undefined)return <LoadingScreen text="Starting up…"/>;
+  if(session===null)return <AuthGate/>;
+  if(loadErr)return <div style={{padding:24,maxWidth:380,margin:'0 auto'}}>
+    <p style={{fontSize:14,fontWeight:700,color:T.r,marginBottom:8}}>Couldn't load your data</p>
+    <p style={{fontSize:13,color:T.txM,marginBottom:16}}>{loadErr}</p>
+    <Btn full onClick={()=>window.location.reload()}>Reload</Btn>
+  </div>;
+  if(state===null)return <LoadingScreen text="Loading your data…"/>;
 
   function quickAddTask(title){
     const t={id:uid(),title:title.trim(),context:state.categories[0]||'anywhere',priority:2,due_date:null,status:'todo',project_id:null};
@@ -1943,7 +2075,7 @@ function App(){
       case 'fitness': return <FitnessView state={state} setState={setState}/>;
       case 'books': return <BooksView state={state} setState={setState}/>;
       case 'reference': return <ReferenceView state={state} setState={setState}/>;
-      case 'settings': return <SettingsView state={state} setState={setState}/>;
+      case 'settings': return <SettingsView state={state} setState={setState} session={session}/>;
       default: return null;
     }
   }
