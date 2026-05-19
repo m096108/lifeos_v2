@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, viewport-fit=cover" />
 <title>LifeOS</title>
 <link rel="icon" type="image/png" href="favicon.png?v=6" />
 <link rel="apple-touch-icon" href="apple-touch-icon.png?v=6" />
@@ -37,7 +37,12 @@ html,body{height:100%;background:#F7F6F3;font-family:'Inter',sans-serif;-webkit-
 body{overflow:hidden}
 #root{height:100%}
 ::-webkit-scrollbar{width:3px}::-webkit-scrollbar-track{background:transparent}::-webkit-scrollbar-thumb{background:#ddd;border-radius:3px}
-input,select,textarea,button{font-family:'Inter',sans-serif;font-size:16px}
+button{font-family:'Inter',sans-serif;font-size:16px}
+/* iOS auto-zooms any input/textarea/select with font-size < 16px on focus.
+   Inline styles in the JSX use 11–15px, so force the floor here with !important
+   to override them. 16px is iOS's exact threshold — no zoom at or above it. */
+input,select,textarea{font-family:'Inter',sans-serif;font-size:16px !important}
+[contenteditable]{font-size:max(1em,16px)}
 @keyframes slideUp{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}}
 @keyframes fadeIn{from{opacity:0}to{opacity:1}}
 @keyframes taskOut{0%{opacity:1;transform:translateX(0)}100%{opacity:0;transform:translateX(60px)}}
@@ -301,7 +306,7 @@ function Stars({rating,onRate}){
 }
 function Sheet({children,onClose}){
   return <div onClick={onClose} style={{position:'fixed',inset:0,zIndex:200,background:'rgba(0,0,0,0.45)',display:'flex',alignItems:'flex-end'}}>
-    <div onClick={e=>e.stopPropagation()} style={{background:T.card,borderRadius:'24px 24px 0 0',padding:'20px 20px 32px',width:'100%',boxSizing:'border-box',maxHeight:'85vh',overflowY:'auto'}}>
+    <div onClick={e=>e.stopPropagation()} style={{background:T.card,borderRadius:'24px 24px 0 0',padding:'20px 20px 32px',width:'100%',boxSizing:'border-box',maxHeight:'88vh',overflowY:'auto',WebkitOverflowScrolling:'touch',overscrollBehavior:'contain',paddingBottom:'calc(32px + env(safe-area-inset-bottom,0px))'}}>
       <div style={{width:36,height:4,borderRadius:99,background:T.border,margin:'0 auto 20px'}}/>
       {children}
     </div>
@@ -649,6 +654,12 @@ function TasksView({state,setState}){
           <option value={1}>🔴 Critical</option><option value={2}>🟡 Normal</option><option value={3}>⚪ Low</option>
         </Sel>
         <input type="date" value={due} onChange={e=>setDue(e.target.value)} style={{gridColumn:'1 / -1',minWidth:0,width:'100%',boxSizing:'border-box',background:T.bgS,border:'none',borderRadius:12,padding:'8px 10px',fontSize:13,fontWeight:600,color:T.tx,outline:'none',fontFamily:'inherit',WebkitAppearance:'none',appearance:'none',display:'block'}}/>
+        <div style={{gridColumn:'1 / -1',display:'flex',gap:6,flexWrap:'wrap'}}>
+          <Pill label="No date" active={!due} onClick={()=>setDue('')}/>
+          <Pill label="Today" active={due===today()} onClick={()=>setDue(today())}/>
+          <Pill label="Tomorrow" active={due===(()=>{const d=new Date();d.setDate(d.getDate()+1);return d.toISOString().split('T')[0];})()} onClick={()=>{const d=new Date();d.setDate(d.getDate()+1);setDue(d.toISOString().split('T')[0]);}}/>
+          <Pill label="+1 week" onClick={()=>{const d=new Date();d.setDate(d.getDate()+7);setDue(d.toISOString().split('T')[0]);}}/>
+        </div>
       </div>}
     </Card>
 
@@ -696,7 +707,19 @@ function TasksView({state,setState}){
             <option value={1}>🔴 Critical</option><option value={2}>🟡 Normal</option><option value={3}>⚪ Low</option>
           </Sel>
         </div>
-        <Inp label="Due date" type="date" value={editSheet.due_date||''} onChange={e=>{const v=e.target.value||null;setEditSheet(s=>({...s,due_date:v}));updateTask(editSheet.id,{due_date:v});}}/>
+        <div>
+          <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:6}}>
+            <label style={{display:'block',fontSize:11,fontWeight:700,textTransform:'uppercase',letterSpacing:'0.1em',color:T.txS}}>Due date</label>
+            {editSheet.due_date&&<button onClick={()=>{setEditSheet(s=>({...s,due_date:null}));updateTask(editSheet.id,{due_date:null});}} style={{fontSize:11,fontWeight:700,color:T.r,background:'none',border:'none',cursor:'pointer',fontFamily:'inherit',padding:'2px 4px'}}>× Clear</button>}
+          </div>
+          <div style={{display:'flex',gap:6,flexWrap:'wrap',marginBottom:8}}>
+            <Pill label="No date" active={!editSheet.due_date} onClick={()=>{setEditSheet(s=>({...s,due_date:null}));updateTask(editSheet.id,{due_date:null});}}/>
+            <Pill label="Today" active={editSheet.due_date===today()} onClick={()=>{const v=today();setEditSheet(s=>({...s,due_date:v}));updateTask(editSheet.id,{due_date:v});}}/>
+            <Pill label="Tomorrow" active={(()=>{const d=new Date();d.setDate(d.getDate()+1);return editSheet.due_date===d.toISOString().split('T')[0];})()} onClick={()=>{const d=new Date();d.setDate(d.getDate()+1);const v=d.toISOString().split('T')[0];setEditSheet(s=>({...s,due_date:v}));updateTask(editSheet.id,{due_date:v});}}/>
+            <Pill label="+1 week" onClick={()=>{const d=new Date();d.setDate(d.getDate()+7);const v=d.toISOString().split('T')[0];setEditSheet(s=>({...s,due_date:v}));updateTask(editSheet.id,{due_date:v});}}/>
+          </div>
+          <input type="date" value={editSheet.due_date||''} onChange={e=>{const v=e.target.value||null;setEditSheet(s=>({...s,due_date:v}));updateTask(editSheet.id,{due_date:v});}} style={{width:'100%',boxSizing:'border-box',background:T.bgS,border:'2px solid transparent',borderRadius:12,padding:'11px 14px',fontWeight:600,color:T.tx,outline:'none',fontFamily:'inherit',WebkitAppearance:'none',appearance:'none',display:'block'}}/>
+        </div>
         <Sel label="Repeats" value={editSheet.recurrence||''} onChange={e=>{const v=e.target.value||null;setEditSheet(s=>({...s,recurrence:v}));updateTask(editSheet.id,{recurrence:v});}}>
           {RECURRENCE_OPTS.map(o=><option key={o.v||'_'} value={o.v||''}>{o.l}</option>)}
         </Sel>
@@ -808,7 +831,10 @@ function ProjectsView({state,setState}){
       <div style={{display:'flex',flexDirection:'column',gap:12}}>
         <Inp label="Title" value={form.title} onChange={e=>setForm({...form,title:e.target.value})}/>
         <Inp label="Notes" area rows={3} value={form.notes} onChange={e=>setForm({...form,notes:e.target.value})}/>
-        <Btn onClick={addProject} full>Create Project</Btn>
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10}}>
+          <Btn v="soft" onClick={()=>{setShowAdd(false);setForm({title:'',notes:''});}} full>Cancel</Btn>
+          <Btn onClick={addProject} full>Create</Btn>
+        </div>
       </div>
     </Card>}
     {projects.length===0&&<Empty icon="📁" text="No projects yet"/>}
@@ -997,7 +1023,10 @@ function TripsView({state,setState}){
         <Inp label="End" type="date" value={form.end_date} onChange={e=>setForm({...form,end_date:e.target.value})}/>
       </div>
       <p style={{fontSize:11,color:T.txS,lineHeight:1.5}}>Default packing list (passport, underwear, toiletries, make up, jewelry, kindle, chargers) and a booking checklist will be added automatically.</p>
-      <Btn onClick={addTrip} full>Add Trip</Btn>
+      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10}}>
+        <Btn v="soft" onClick={()=>{setShowAdd(false);setForm({destination:'',start_date:'',end_date:''});}} full>Cancel</Btn>
+        <Btn onClick={addTrip} full>Add Trip</Btn>
+      </div>
     </div></Card>}
     {sortedTrips.length===0&&<Empty icon="✈️" text="No trips planned"/>}
     {sortedTrips.map(trip=>{
@@ -1163,7 +1192,7 @@ function ClothingView({state,setState,initialTripFilter}){
 
     {editInspo&&<Sheet onClose={()=>setEditInspo(null)}>
       <div style={{display:'flex',flexDirection:'column',gap:14}}>
-        <img src={editInspo.photo} alt="" style={{width:'100%',maxHeight:'45vh',objectFit:'contain',borderRadius:12,background:T.bgS}}/>
+        <img src={editInspo.photo} alt="" style={{width:'100%',maxHeight:'28vh',objectFit:'contain',borderRadius:12,background:T.bgS}}/>
         <div>
           <SecLabel>Trip</SecLabel>
           <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
@@ -1244,8 +1273,8 @@ function WorkoutsTab({state,save}){
   const calendar=(()=>{
     const first=new Date(calY,calM,1);
     const daysInMonth=new Date(calY,calM+1,0).getDate();
-    // Monday = 0
-    const startOffset=(first.getDay()+6)%7;
+    // Sunday = 0 (US-style)
+    const startOffset=first.getDay();
     const cells=[];
     for(let i=0;i<startOffset;i++)cells.push(null);
     for(let d=1;d<=daysInMonth;d++){
@@ -1291,11 +1320,25 @@ function WorkoutsTab({state,save}){
     {/* Habit summary */}
     <Card style={{padding:'16px',background:T.acS,boxShadow:'none'}}>
       <p style={{fontSize:10,fontWeight:800,textTransform:'uppercase',letterSpacing:'0.12em',color:T.ac,marginBottom:8}}>Habit Check-in</p>
-      {summary.lastMonthWorkouts>0?<p style={{fontSize:14,color:T.tx,lineHeight:1.55}}>
-        You completed <strong style={{fontWeight:700}}>{summary.lastAvgPerWeek.toFixed(1)} workouts per week</strong> on average in {summary.lastMonthName} ({summary.lastMonthWorkouts} total). Let's see if you can get to <strong style={{fontWeight:700,color:T.ac}}>{summary.target} this month</strong>!
-      </p>:<p style={{fontSize:14,color:T.tx,lineHeight:1.55}}>
-        No workouts logged in {summary.lastMonthName} yet. Aim for <strong style={{fontWeight:700,color:T.ac}}>3 this month</strong> to build the habit.
-      </p>}
+      {(()=>{
+        const thisMonthName=now.toLocaleDateString('en-US',{month:'long'});
+        const dayOfMonth=now.getDate();
+        const thisMonthCount=workouts.filter(w=>{const d=new Date(w.date+'T12:00:00');return d.getFullYear()===now.getFullYear()&&d.getMonth()===now.getMonth();}).length;
+        // After day 7, lead with this month's current pace — last month is stale context by then.
+        if(dayOfMonth>=8){
+          return <p style={{fontSize:14,color:T.tx,lineHeight:1.55}}>
+            You're averaging <strong style={{fontWeight:700,color:T.ac}}>{summary.thisAvgPerWeek.toFixed(1)} workouts per week</strong> in {thisMonthName} so far ({thisMonthCount} total).{summary.lastMonthWorkouts>0?` Last month: ${summary.lastAvgPerWeek.toFixed(1)}/wk.`:''} Aim for <strong style={{fontWeight:700}}>{summary.target}/wk</strong>.
+          </p>;
+        }
+        if(summary.lastMonthWorkouts>0){
+          return <p style={{fontSize:14,color:T.tx,lineHeight:1.55}}>
+            You completed <strong style={{fontWeight:700}}>{summary.lastAvgPerWeek.toFixed(1)} workouts per week</strong> on average in {summary.lastMonthName} ({summary.lastMonthWorkouts} total). Let's see if you can get to <strong style={{fontWeight:700,color:T.ac}}>{summary.target} this month</strong>!
+          </p>;
+        }
+        return <p style={{fontSize:14,color:T.tx,lineHeight:1.55}}>
+          No workouts logged in {summary.lastMonthName} yet. Aim for <strong style={{fontWeight:700,color:T.ac}}>3 this month</strong> to build the habit.
+        </p>;
+      })()}
       {summary.thisAvgPerWeek>0&&<div style={{marginTop:12,display:'flex',alignItems:'center',gap:10}}>
         <div style={{flex:1}}>
           <Bar value={summary.thisAvgPerWeek} max={summary.target} h={6}/>
@@ -1320,7 +1363,7 @@ function WorkoutsTab({state,save}){
       </div>
 
       <div style={{display:'grid',gridTemplateColumns:'repeat(7,1fr)',gap:4,marginBottom:6}}>
-        {['M','T','W','T','F','S','S'].map((d,i)=><div key={i} style={{textAlign:'center',fontSize:10,fontWeight:700,color:T.txS,letterSpacing:'0.06em'}}>{d}</div>)}
+        {['S','M','T','W','T','F','S'].map((d,i)=><div key={i} style={{textAlign:'center',fontSize:10,fontWeight:700,color:T.txS,letterSpacing:'0.06em'}}>{d}</div>)}
       </div>
       <div style={{display:'grid',gridTemplateColumns:'repeat(7,1fr)',gap:4}}>
         {calendar.map((c,i)=>{
@@ -1929,10 +1972,10 @@ const NAV=[
   {id:'tasks',label:'Tasks',icon:'✓'},
   {id:'projects',label:'Projects',icon:'◫'},
   {id:'trips',label:'Trips',icon:'✈'},
-  {id:'clothing',label:'Style',icon:<StyleIcon/>},
   {id:'fitness',label:'Fitness',icon:<FitnessIcon/>},
   {id:'books',label:'Books',icon:'▤'},
   {id:'reference',label:'Reference',icon:<ReferenceIcon/>},
+  {id:'clothing',label:'Style',icon:<StyleIcon/>},
 ];
 
 function LoadingScreen({text}){
